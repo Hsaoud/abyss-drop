@@ -1,5 +1,5 @@
 /* Abyss Drop service worker — cache-first for full offline play */
-const VERSION = "abyss-drop-v1.0.0";
+const VERSION = "abyss-drop-v1.1.0";
 const ASSETS = [
   "./",
   "./index.html",
@@ -17,9 +17,11 @@ self.addEventListener("install", (e) => {
 
 self.addEventListener("activate", (e) => {
   e.waitUntil(
-    caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k))))
-      .then(() => self.clients.claim())
+    Promise.all([
+      caches.keys()
+        .then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k)))),
+      self.registration.navigationPreload ? self.registration.navigationPreload.enable() : Promise.resolve(),
+    ]).then(() => self.clients.claim())
   );
 });
 
@@ -30,17 +32,19 @@ self.addEventListener("fetch", (e) => {
   const isNav = e.request.mode === "navigate" || url.pathname.endsWith("/index.html");
   if (isNav) {
     // network-first: players get updates when online, cache keeps it playable offline
-    e.respondWith(
-      fetch(e.request)
-        .then((res) => {
-          if (res && res.ok) {
-            const copy = res.clone();
-            caches.open(VERSION).then((c) => c.put("./index.html", copy));
-          }
-          return res;
-        })
-        .catch(() => caches.match("./index.html"))
-    );
+    e.respondWith((async () => {
+      try {
+        const preload = e.preloadResponse ? await e.preloadResponse : null;
+        const res = preload || await fetch(e.request);
+        if (res && res.ok) {
+          const copy = res.clone();
+          e.waitUntil(caches.open(VERSION).then((c) => c.put("./index.html", copy)));
+        }
+        return res;
+      } catch (err) {
+        return caches.match("./index.html");
+      }
+    })());
     return;
   }
   e.respondWith(
@@ -49,7 +53,7 @@ self.addEventListener("fetch", (e) => {
       return fetch(e.request).then((res) => {
         if (res && res.ok) {
           const copy = res.clone();
-          caches.open(VERSION).then((c) => c.put(e.request, copy));
+          e.waitUntil(caches.open(VERSION).then((c) => c.put(e.request, copy)));
         }
         return res;
       });

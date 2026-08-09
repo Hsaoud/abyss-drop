@@ -12,7 +12,8 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="monetization" href="https://ilp.interledger-test.dev/abyssdrop">
+<!-- Web Monetization: add your production Interledger payment pointer, e.g.
+     <link rel="monetization" href="https://ilp.example.com/yourpointer"> -->
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body {
@@ -105,18 +106,30 @@
 <body>
 <noscript>Abyss Drop nécessite JavaScript. / Abyss Drop requires JavaScript.</noscript>
 <canvas id="c"></canvas>
-<button class="btn-ico" id="btnMute" aria-label="Son">🔊</button>
-<button class="btn-ico" id="btnMenu" aria-label="Menu">☰</button>
+<button class="btn-ico" id="btnMute" aria-label="Son">
+  <svg id="icoSoundOn" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z" fill="currentColor" stroke="none"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+  <svg id="icoSoundOff" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M11 5 6 9H2v6h4l5 4V5z" fill="currentColor" stroke="none"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>
+</button>
+<button class="btn-ico" id="btnMenu" aria-label="Menu">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
+</button>
 
 <div class="overlay" id="ovOver">
   <div class="panel">
     <div id="nbBadge" class="newbest" style="display:none"></div>
     <h2 id="ovTitle"></h2>
     <div class="score-big" id="ovScore">0</div>
+    <div id="nearMiss" style="display:none;font-size:13px;color:#ffd678;margin:2px 0 6px">
+      <span id="nearMissTxt"></span>
+      <div style="height:5px;border-radius:3px;background:rgba(120,190,255,.14);margin-top:6px;overflow:hidden">
+        <div id="nearMissBar" style="height:100%;width:0%;border-radius:3px;background:linear-gradient(90deg,#2ea8ff,#ffd678);transition:width .9s cubic-bezier(.22,1,.36,1)"></div>
+      </div>
+    </div>
     <div class="score-best" id="ovBest"></div>
     <button class="btn btn-reward" id="btnContinue"></button>
     <button class="btn btn-reward" id="btnDouble"></button>
     <button class="btn btn-primary" id="btnRestart"></button>
+    <button class="btn btn-ghost" id="btnDaily"></button>
   </div>
 </div>
 
@@ -140,10 +153,11 @@
 </div>
 
 <div id="iosHint"></div>
+<div id="sabProbe" style="position:fixed;bottom:0;left:0;width:1px;height:env(safe-area-inset-bottom);pointer-events:none;visibility:hidden"></div>
 
 <script>
 "use strict";
-window.__BUILD = "r2";
+window.__BUILD = "r3";
 /* =====================================================================
    ABYSS DROP — bioluminescent merge-drop
    Single-file vanilla JS · custom fixed-timestep circle physics ·
@@ -152,6 +166,7 @@ window.__BUILD = "r2";
 
 /* ---------------- utils ---------------- */
 const HEADLESS = /[?&]headless=1/.test(location.search);
+let LOWQ = false; // adaptive quality: set when sustained slow frames are detected
 const TAU = Math.PI * 2;
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -174,6 +189,8 @@ const dayKey = () => { const d = new Date(); return d.getFullYear() * 10000 + (d
 const FR = (navigator.language || "en").toLowerCase().startsWith("fr");
 const T = FR ? {
   gameOver: "ABYSSE ATTEINT", score: "SCORE", best: "RECORD", newBest: "NOUVEAU RECORD !",
+  nearMiss: p => `À ${p}% de ton record !`,
+  dailyBtn: "☀ Défi du jour", dailyOff: "Partie classique", dailyPending: "Au prochain plongeon",
   restart: "Rejouer", cont: "Continuer", contAd: "Continuer (pub)", dbl: "Score ×2", dblAd: "Score ×2 (pub)",
   sound: "Son", haptics: "Vibrations", daily: "Défi du jour", theme: "Ambiance",
   close: "Reprendre", install: "Installer l'app", menuRestart: "Recommencer la partie",
@@ -185,6 +202,8 @@ const T = FR ? {
   combo: "COMBO",
 } : {
   gameOver: "THE ABYSS CLAIMS YOU", score: "SCORE", best: "BEST", newBest: "NEW BEST!",
+  nearMiss: p => `${p}% of your best!`,
+  dailyBtn: "☀ Daily challenge", dailyOff: "Classic mode", dailyPending: "Starting next dive",
   restart: "Play again", cont: "Continue", contAd: "Continue (ad)", dbl: "Double score", dblAd: "2× score (ad)",
   sound: "Sound", haptics: "Haptics", daily: "Daily challenge", theme: "Theme",
   close: "Resume", install: "Install app", menuRestart: "Restart run",
@@ -210,11 +229,11 @@ const TIERS = [
   { f: 0.066, hi: "#e2c8ff", lo: "#6f3fb5", glow: "#b47aff" },
   { f: 0.080, hi: "#baf1ff", lo: "#1f7aa0", glow: "#5fdcff" },
   { f: 0.097, hi: "#fff3b0", lo: "#b08a1a", glow: "#ffe14d" },
-  { f: 0.117, hi: "#8fa0f5", lo: "#25308f", glow: "#6c86ff" },
-  { f: 0.140, hi: "#f3c2ff", lo: "#7e2fae", glow: "#d96bff" },
+  { f: 0.117, hi: "#5a6db8", lo: "#141c4a", glow: "#8fefff" },
+  { f: 0.140, hi: "#ffb3d6", lo: "#a02360", glow: "#ff4fa3" },
   { f: 0.166, hi: "#c8ffd2", lo: "#2a8a48", glow: "#6bff8f" },
   { f: 0.196, hi: "#c3d2ff", lo: "#3648b5", glow: "#7f9bff" },
-  { f: 0.230, hi: "#bfe9ff", lo: "#1f6a9a", glow: "#59c9ff" },
+  { f: 0.230, hi: "#7fb8e8", lo: "#0d3a66", glow: "#45d8ff" },
 ];
 const PTS = [1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 66];
 const SPAWN_MAX = 4;                    // spawnable tiers 0..4
@@ -229,7 +248,7 @@ const THEMES = [
 const S = {
   sound: store.get("sound", true),
   haptics: store.get("haptics", true),
-  daily: false,
+  daily: store.get("daily", false),
   theme: store.get("theme", 0),
   best: store.get("best", 0),
   dailyBest: store.get("dailyBest", { day: 0, score: 0 }),
@@ -244,23 +263,28 @@ function vibe(p) { if (S.haptics && canVibe) { try { navigator.vibrate(p); } cat
 
 /* ---------------- audio (all synthesized) ---------------- */
 const SFX = (() => {
-  let ctx = null, master = null, ambGain = null, unlocked = false, lastThud = 0, lastTick = 0;
-  const PENT = [0, 2, 4, 7, 9];
+  let ctx = null, master = null, comp = null, ambGain = null, unlocked = false, lastThud = 0, lastTick = 0;
+  const PENT = [0, 4, 7, 9, 14]; // C E G A D — wide arpeggio contour (never dissonant)
   function ensure() {
     if (ctx) return true;
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return false;
       ctx = new AC();
+      comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -12; comp.knee.value = 20; comp.ratio.value = 6;
+      comp.attack.value = 0.003; comp.release.value = 0.25;
+      comp.connect(ctx.destination);
       master = ctx.createGain();
-      master.gain.value = S.sound ? 0.9 : 0;
-      master.connect(ctx.destination);
+      master.gain.value = S.sound ? 0.8 : 0;
+      master.connect(comp);
+      ctx.onstatechange = () => { if (unlocked && ctx.state !== "running") ctx.resume().catch(() => { }); };
     } catch (e) { return false; }
     return true;
   }
   function unlock() {
     if (!ensure()) return;
-    if (ctx.state === "suspended") ctx.resume().catch(() => { });
+    if (ctx.state !== "running") ctx.resume().catch(() => { });
     if (!unlocked) {
       unlocked = true;
       try {
@@ -270,32 +294,40 @@ const SFX = (() => {
       startAmbience();
     }
   }
-  function resume() { if (ctx && ctx.state === "suspended") ctx.resume().catch(() => { }); }
+  function resume() { if (ctx && ctx.state !== "running") ctx.resume().catch(() => { }); }
   function suspend() { if (ctx && ctx.state === "running") ctx.suspend().catch(() => { }); }
-  function setMuted(m) { if (master) master.gain.setTargetAtTime(m ? 0 : 0.9, ctx.currentTime, 0.02); }
-  function env(g0, t, a) {
+  function setMuted(m) { if (master) master.gain.setTargetAtTime(m ? 0 : 0.8, ctx.currentTime, 0.02); }
+  /* env/osc accept an absolute AudioContext start time so melodies never ride main-thread jitter */
+  function env(g0, t, a, at, pan) {
     const g = ctx.createGain();
-    const now = ctx.currentTime;
-    g.gain.setValueAtTime(0.0001, now);
-    g.gain.exponentialRampToValueAtTime(Math.max(g0, 0.0001), now + (a || 0.006));
-    g.gain.exponentialRampToValueAtTime(0.0001, now + t);
+    const t0 = at || ctx.currentTime;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(Math.max(g0, 0.0001), t0 + (a || 0.006));
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + t);
+    if (pan && ctx.createStereoPanner) {
+      try {
+        const p = ctx.createStereoPanner(); p.pan.value = pan;
+        g.connect(p); p.connect(master); return g;
+      } catch (e) { }
+    }
     g.connect(master);
     return g;
   }
-  function osc(type, f0, f1, t, gain, a) {
+  function osc(type, f0, f1, t, gain, opts) {
     if (!ctx || !unlocked) return;
+    const o2 = opts || {};
     try {
       const o = ctx.createOscillator();
       o.type = type;
-      const now = ctx.currentTime;
-      o.frequency.setValueAtTime(f0, now);
-      if (f1) o.frequency.exponentialRampToValueAtTime(Math.max(f1, 1), now + t * 0.9);
-      o.connect(env(gain, t, a));
-      o.start(now); o.stop(now + t + 0.02);
+      const t0 = o2.at || ctx.currentTime;
+      o.frequency.setValueAtTime(f0, t0);
+      if (f1) o.frequency.exponentialRampToValueAtTime(Math.max(f1, 1), t0 + t * 0.9);
+      o.connect(env(gain, t, o2.a, t0, o2.pan));
+      o.start(t0); o.stop(t0 + t + 0.02);
     } catch (e) { }
   }
   let noiseBuf = null;
-  function noise(t, gain, fc, type) {
+  function noise(t, gain, fc, type, pan) {
     if (!ctx || !unlocked) return;
     try {
       if (!noiseBuf) {
@@ -305,19 +337,23 @@ const SFX = (() => {
       }
       const src = ctx.createBufferSource(); src.buffer = noiseBuf;
       const f = ctx.createBiquadFilter(); f.type = type || "lowpass"; f.frequency.value = fc;
-      src.connect(f); f.connect(env(gain, t));
+      src.connect(f); f.connect(env(gain, t, 0.004, 0, pan));
       src.start(); src.stop(ctx.currentTime + t + 0.02);
     } catch (e) { }
   }
   function detune() { return 1 + rand(-0.05, 0.05); }
+  const panOf = x => clamp((x / Math.max(VW, 1) - 0.5) * 0.7, -0.6, 0.6);
   function startAmbience() {
     if (!ctx || ambGain) return;
     try {
       ambGain = ctx.createGain(); ambGain.gain.value = 0.05; ambGain.connect(master);
-      const buf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+      const N = Math.floor(ctx.sampleRate * 2);
+      const buf = ctx.createBuffer(1, N, ctx.sampleRate);
       const d = buf.getChannelData(0);
       let last = 0;
-      for (let i = 0; i < d.length; i++) { const w = Math.random() * 2 - 1; last = (last + 0.015 * w) / 1.015; d[i] = last * 5; }
+      for (let i = 0; i < N; i++) { const w = Math.random() * 2 - 1; last = (last + 0.015 * w) / 1.015; d[i] = last * 5; }
+      const X = Math.floor(ctx.sampleRate * 0.1); // crossfade loop seam
+      for (let i = 0; i < X; i++) { const k = i / X; d[N - X + i] = d[N - X + i] * (1 - k) + d[i] * k; }
       const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
       const f = ctx.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 160;
       src.connect(f); f.connect(ambGain); src.start();
@@ -346,58 +382,93 @@ const SFX = (() => {
       scheduleWhale();
     }, rand(24000, 55000));
   }
+  const pentFreq = i => 523.25 * Math.pow(2, PENT[i % 5] / 12) * Math.pow(2, Math.min(Math.floor(i / 5), 2));
   return {
     unlock, resume, suspend, setMuted,
-    pop(chain, tier) {
-      const oct = Math.min(Math.floor(chain / 5), 2);
-      const f = 523.25 * Math.pow(2, PENT[chain % 5] / 12) * Math.pow(2, oct) * detune();
-      const g = 0.16 + Math.min(tier, 8) * 0.008;
-      osc("triangle", f, f * 1.02, 0.18, g);
-      osc("sine", f * 2, f * 2, 0.1, g * 0.4);
-      if (tier >= 5) osc("sine", f * 0.5, f * 0.5, 0.22, g * 0.5);
-      noise(0.05, 0.05, 2400, "highpass");
+    duckAmbience(level) {
+      if (ambGain && ctx) ambGain.gain.setTargetAtTime(lerp(0.05, 0.018, level), ctx.currentTime, 0.3);
     },
-    thud(v) {
+    pop(chain, tier, x) {
+      const f = pentFreq(chain) * detune();
+      const g = 0.16 + Math.min(tier, 8) * 0.008;
+      const pan = x !== undefined ? panOf(x) : 0;
+      osc("triangle", f, f * 1.02, 0.18, g, { pan });
+      osc("sine", f * 2, f * 2, 0.1, g * 0.4, { pan });
+      if (tier >= 5) osc("sine", f * 0.5, f * 0.5, 0.22, g * 0.5, { pan });
+      noise(0.05, 0.05, 2400, "highpass", pan);
+    },
+    thud(v, tier, x) {
       const now = performance.now();
       if (now - lastThud < 45) return;
       lastThud = now;
-      osc("sine", 110 * detune(), 55, 0.11, 0.1 * v + 0.02);
-      noise(0.05, 0.045 * v, 420, "lowpass");
+      const big = tier || 0;
+      const f0 = (150 - big * 9) * detune();
+      const pan = x !== undefined ? panOf(x) : 0;
+      osc("sine", f0, f0 * 0.5, 0.11 + big * 0.008, 0.1 * v + 0.02 + big * 0.006, { pan });
+      noise(0.05, 0.045 * v, 420, "lowpass", pan);
     },
     plip() { osc("sine", 340 * detune(), 420, 0.05, 0.05); },
     ui() { osc("sine", 660, 720, 0.05, 0.06); },
-    dangerTick() {
+    dangerTick(warn) {
       const now = performance.now();
-      if (now - lastTick < 650) return;
+      const w = clamp(warn || 0.4, 0, 1);
+      if (now - lastTick < lerp(700, 260, w)) return;
       lastTick = now;
-      osc("sine", 233, 220, 0.14, 0.05);
-      osc("sine", 466, 440, 0.1, 0.02);
+      const g = lerp(0.05, 0.09, w);
+      osc("sine", 233, 220, 0.14, g);
+      osc("sine", 466, 440, 0.1, g * 0.4);
+      noise(0.015, 0.03, 1400, "highpass");
     },
     whaleBirth() {
-      [523.25, 659.25, 783.99, 1046.5].forEach((f, i) =>
-        setTimeout(() => { osc("triangle", f, f, 0.3, 0.14); osc("sine", f * 2, f * 2, 0.2, 0.05); }, i * 90));
+      if (!ctx || !unlocked) return;
+      const t0 = ctx.currentTime;
+      [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
+        osc("triangle", f, f, 0.3, 0.14, { at: t0 + i * 0.09 });
+        osc("sine", f * 2, f * 2, 0.2, 0.05, { at: t0 + i * 0.09 });
+      });
       noise(0.6, 0.05, 5000, "highpass");
     },
     newBest() {
+      if (!ctx || !unlocked) return;
+      const t0 = ctx.currentTime;
       [659.25, 783.99, 1046.5].forEach((f, i) =>
-        setTimeout(() => osc("triangle", f, f * 1.01, 0.22, 0.12), i * 80));
+        osc("triangle", f, f * 1.01, 0.22, 0.12, { at: t0 + i * 0.08 }));
     },
     over() {
+      if (!ctx || !unlocked) return;
+      const t0 = ctx.currentTime;
       [392, 329.63, 261.63, 196].forEach((f, i) =>
-        setTimeout(() => { osc("triangle", f, f * 0.99, 0.3, 0.1); }, i * 170));
+        osc("triangle", f, f * 0.99, 0.3, 0.1, { at: t0 + i * 0.17 }));
       osc("sine", 70, 40, 0.9, 0.12);
     },
-    popSmall(i) { osc("sine", (500 + i * 60) * detune(), 700 + i * 60, 0.07, 0.05); },
+    popSmall(i) {
+      const f = pentFreq(i) * detune();
+      osc("sine", f, f * 1.06, 0.07, 0.05);
+    },
   };
 })();
 
-/* ---------------- ad facade (ships inert; detects Poki / CrazyGames / Google H5) ---------------- */
+/* ---------------- ad facade (ships inert; loads + drives Poki / CrazyGames / Google H5) ---------------- */
 const Ads = (() => {
   const DBG = /[?&]debugads=1/.test(location.search);
   const log = (...a) => { if (DBG) console.log("[Ads]", ...a); };
-  let kind = "none", sdk = null, inited = false;
-  let interstitialCount = 0, lastInterstitial = 0, runs = 0;
+  let kind = "none", sdk = null, inited = false, adblocked = false;
+  let interstitialCount = 0, lastInterstitial = 0, runs = 0, runStartAt = 0;
   const sessionStart = Date.now();
+  const portalParam = (location.search.match(/[?&]portal=(\w+)/) || [])[1];
+  function hostPortal() {
+    const h = location.hostname;
+    if (/(^|\.)crazygames\.(com|fr|de|es|it|nl|pl|pt|jp|co\.uk)$/.test(h) || /crazygames/.test(document.referrer)) return "crazygames";
+    if (/poki/.test(h) || /poki-gdn\.com$/.test(h) || /poki\.com/.test(document.referrer)) return "poki";
+    return null;
+  }
+  function loadScript(src) {
+    return new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = src; s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
   function detect() {
     try {
       if (window.PokiSDK) { kind = "poki"; sdk = window.PokiSDK; }
@@ -406,79 +477,122 @@ const Ads = (() => {
     } catch (e) { }
     log("detected:", kind);
   }
-  function init() {
+  async function init() {
     detect();
+    // bootstrap the portal SDK when we can tell where we are but the SDK isn't present
+    if (kind === "none") {
+      const portal = portalParam || hostPortal();
+      try {
+        if (portal === "crazygames") await loadScript("https://sdk.crazygames.com/crazygames-sdk-v3.js");
+        else if (portal === "poki") await loadScript("https://game-cdn.poki.com/scripts/v2/poki-sdk.js");
+      } catch (e) { log("sdk load failed"); }
+      detect();
+    }
     try {
-      if (kind === "poki") sdk.init().then(() => { inited = true; log("poki ready"); }).catch(() => { });
-      else if (kind === "crazygames") { inited = true; }
-      else inited = true;
-    } catch (e) { inited = true; }
+      if (kind === "poki") {
+        await sdk.init();
+        inited = true;
+        try { sdk.gameLoadingFinished(); } catch (e) { }
+        log("poki ready");
+      } else if (kind === "crazygames") {
+        await sdk.init(); // v3 hard-requires init before any module call
+        inited = true;
+        try { adblocked = await sdk.ad.hasAdblock(); } catch (e) { }
+        log("crazygames ready, adblock:", adblocked);
+      } else if (kind === "h5") {
+        try { window.adConfig({ preloadAdBreaks: "on", sound: S.sound ? "on" : "off" }); } catch (e) { }
+        inited = true;
+      } else inited = true;
+    } catch (e) { inited = true; log("init error", e); }
   }
   function muteForAd(on) { SFX.setMuted(on || !S.sound); Game.adPause(on); }
+  const effectiveKind = () => (inited && !adblocked ? kind : (kind === "none" ? "none" : "blocked"));
   return {
     init,
     get kind() { return kind; },
+    get standalone() { return kind === "none" && window.top === window; },
+    runStarted() { runs++; runStartAt = Date.now(); },
     gameplayStart() {
-      runs++;
       try {
         if (kind === "poki") sdk.gameplayStart();
-        else if (kind === "crazygames") sdk.game.gameplayStart();
+        else if (kind === "crazygames" && inited) sdk.game.gameplayStart();
       } catch (e) { }
       log("gameplayStart");
     },
     gameplayStop() {
       try {
         if (kind === "poki") sdk.gameplayStop();
-        else if (kind === "crazygames") sdk.game.gameplayStop();
+        else if (kind === "crazygames" && inited) sdk.game.gameplayStop();
       } catch (e) { }
       log("gameplayStop");
     },
-    /* interstitial: run-end transitions only, max 2/session, >=150s apart, never before run 2 */
+    /* interstitial: run-end transitions only, max 2/session, >=150s apart, never before run 2,
+       skipped after rage-restarts (<30s runs) and for no-ads purchasers */
     maybeInterstitial(placement, done) {
       const now = Date.now();
-      const ok = kind !== "none" && interstitialCount < 2 && runs >= 2 &&
-        (now - lastInterstitial > 150000) && (now - sessionStart > 120000);
+      const runDur = runStartAt ? now - runStartAt : 0;
+      const ok = effectiveKind() !== "none" && effectiveKind() !== "blocked" &&
+        interstitialCount < 2 && runs >= 2 &&
+        (now - lastInterstitial > 150000) && (now - sessionStart > 120000) &&
+        runDur >= 30000 &&
+        !(IAP.enabled && IAP.owns("noads"));
       log("interstitial?", placement, ok);
       if (!ok) { done(); return; }
       interstitialCount++; lastInterstitial = now;
       try {
-        if (kind === "poki") { muteForAd(true); sdk.commercialBreak().then(() => { muteForAd(false); done(); }); }
-        else if (kind === "crazygames") {
+        if (kind === "poki") {
+          muteForAd(true);
+          sdk.commercialBreak().then(() => { muteForAd(false); done(); })
+            .catch(() => { muteForAd(false); done(); });
+        } else if (kind === "crazygames") {
           muteForAd(true);
           sdk.ad.requestAd("midgame", {
             adStarted: () => { }, adFinished: () => { muteForAd(false); done(); },
             adError: () => { muteForAd(false); done(); },
           });
         } else if (kind === "h5") {
-          window.adBreak({ type: "next", name: placement, beforeAd: () => muteForAd(true), afterAd: () => { muteForAd(false); done(); } });
-          done();
+          window.adBreak({
+            type: "next", name: placement,
+            beforeAd: () => muteForAd(true),
+            afterAd: () => muteForAd(false),
+            adBreakDone: () => { muteForAd(false); done(); }, // single completion path (fires with or without fill)
+          });
         } else done();
       } catch (e) { muteForAd(false); done(); }
     },
-    /* rewarded: granted free when no SDK (standalone PWA UX) */
+    /* rewarded: granted free when standalone or ad path unavailable */
     rewarded(placement, onReward, onFail) {
       log("rewarded", placement);
+      const free = () => onReward();
       try {
-        if (kind === "poki") {
+        if (kind === "poki" && inited) {
           muteForAd(true);
-          sdk.rewardedBreak().then(ok => { muteForAd(false); ok ? onReward() : (onFail && onFail()); });
-        } else if (kind === "crazygames") {
+          sdk.rewardedBreak().then(ok => { muteForAd(false); ok ? onReward() : (onFail ? onFail() : 0); })
+            .catch(() => { muteForAd(false); free(); });
+        } else if (kind === "crazygames" && inited) {
+          if (adblocked) { free(); return; } // CG QA: game must stay playable under adblock
           muteForAd(true);
           sdk.ad.requestAd("rewarded", {
             adStarted: () => { }, adFinished: () => { muteForAd(false); onReward(); },
-            adError: () => { muteForAd(false); onFail && onFail(); },
+            adError: () => { muteForAd(false); free(); },
           });
         } else if (kind === "h5") {
+          let settled = false;
           window.adBreak({
             type: "reward", name: placement,
             beforeAd: () => muteForAd(true), afterAd: () => muteForAd(false),
-            adViewed: () => onReward(), adDismissed: () => onFail && onFail(),
             beforeReward: showAdFn => showAdFn(),
+            adViewed: () => { settled = true; onReward(); },
+            adDismissed: () => { settled = true; onFail && onFail(); },
+            adBreakDone: info => {
+              muteForAd(false);
+              if (!settled) free(); // no fill / frequency cap: grant free rather than dead button
+            },
           });
-        } else onReward(); // standalone: free
-      } catch (e) { onReward(); }
+        } else free(); // standalone: free
+      } catch (e) { free(); }
     },
-    adLabel(base, adBase) { return kind === "none" ? base : adBase; },
+    adLabel(base, adBase) { return kind === "none" || adblocked ? base : adBase; },
   };
 })();
 
@@ -486,8 +600,8 @@ const Ads = (() => {
 const IAP = {
   enabled: false,
   catalog: [
-    { id: "noads", price: "3.99" },
-    { id: "theme_pack", price: "1.99" },
+    { id: "noads", price: "3.99", currency: "USD" },
+    { id: "theme_pack", price: "1.99", currency: "USD" },
   ],
   owns(id) { return !!store.get("iap_" + id, false); },
   grant(id) { store.set("iap_" + id, true); },
@@ -500,7 +614,7 @@ let DPR = 1, VW = 0, VH = 0;
 let L = null; // layout
 
 function layout() {
-  DPR = clamp(window.devicePixelRatio || 1, 1, 2);
+  DPR = clamp(window.devicePixelRatio || 1, 1, LOWQ ? 1 : 2);
   VW = window.innerWidth; VH = window.innerHeight;
   canvas.width = Math.round(VW * DPR);
   canvas.height = Math.round(VH * DPR);
@@ -510,34 +624,38 @@ function layout() {
 
   const mb = document.getElementById("btnMute");
   const safeTop = mb ? Math.max(10, mb.getBoundingClientRect().top) : 10;
-  const hudTop = safeTop + 52;
-  const botBar = 44;
-  const availH = VH - hudTop - botBar - 12;
-  const availW = VW - 14;
-  let cw = Math.min(availW, 500);
-  let ch = cw * 1.24;
-  const maxCh = availH - 74; // leave drop zone
-  if (ch > maxCh) { ch = maxCh; cw = Math.min(cw, ch / 1.02); }
-  cw = Math.max(cw, 220); ch = Math.max(ch, 300);
+  const sab = document.getElementById("sabProbe");
+  const safeBottom = sab ? sab.offsetHeight : 0;
+  const hudTop = safeTop + 48;
+  const botBar = 40 + safeBottom;
+  const dropZone = 62;
+  const availH = VH - hudTop - botBar - 6;
+  let ch = availH - dropZone;
+  let cw = Math.min(VW - 14, 500, ch * 0.85);
+  ch = Math.min(ch, cw * 1.35);
+  cw = Math.max(cw, 140); ch = Math.max(ch, 160);
   const x0 = (VW - cw) / 2;
-  const yFloor = VH - botBar - 10;
+  const yFloor = VH - botBar - 6;
   const yTop = yFloor - ch;
   const old = L;
   L = {
-    cw, ch, x0, x1: x0 + cw, yFloor, yTop, hudTop, safeTop,
+    cw, ch, x0, x1: x0 + cw, yFloor, yTop, hudTop, safeTop, safeBottom,
     scale: cw / 420,
     dropY: yTop - 26,
     wallTop: yTop - 34,
   };
-  // rescale existing bodies
+  // rescale existing bodies (positions, radii, velocities AND interpolation state)
   if (old && Game.creatures) {
     const kx = cw / old.cw;
     for (const c of Game.creatures) {
       c.x = L.x0 + (c.x - old.x0) * kx;
       c.y = L.yFloor - (old.yFloor - c.y) * kx;
+      c.px = c.x; c.py = c.y;
+      c.vx *= kx; c.vy *= kx;
       c.r = TIERS[c.tier].f * cw;
       c.m = c.r * c.r; c.im = 1 / c.m;
     }
+    Game.rescaleHeld();
   }
   Sprites.clear();
   Bg.rebuild();
@@ -557,20 +675,24 @@ const Sprites = (() => {
   function build(tier, r) {
     const pad = r * 0.95;
     const size = Math.ceil((r + pad) * 2 * DPR);
+    const t = TIERS[tier];
+    const cx = (r + pad), cy = (r + pad);
+    // halo canvas — drawn with 'lighter' at render time so bioluminescence sums in piles
+    const hv = document.createElement("canvas");
+    hv.width = size; hv.height = size;
+    const hg = hv.getContext("2d");
+    hg.scale(DPR, DPR);
+    const glow = hg.createRadialGradient(cx, cy, r * 0.45, cx, cy, r * 1.85);
+    glow.addColorStop(0, hexA(t.glow, 0.30));
+    glow.addColorStop(0.55, hexA(t.glow, 0.11));
+    glow.addColorStop(1, hexA(t.glow, 0));
+    hg.fillStyle = glow;
+    hg.beginPath(); hg.arc(cx, cy, r * 1.85, 0, TAU); hg.fill();
+    // body canvas
     const cv = document.createElement("canvas");
     cv.width = size; cv.height = size;
     const g = cv.getContext("2d");
     g.scale(DPR, DPR);
-    const cx = (r + pad), cy = (r + pad);
-    const t = TIERS[tier];
-    // outer glow
-    const glow = g.createRadialGradient(cx, cy, r * 0.5, cx, cy, r * 1.85);
-    glow.addColorStop(0, hexA(t.glow, 0.34));
-    glow.addColorStop(0.55, hexA(t.glow, 0.12));
-    glow.addColorStop(1, hexA(t.glow, 0));
-    g.fillStyle = glow;
-    g.beginPath(); g.arc(cx, cy, r * 1.85, 0, TAU); g.fill();
-    // body
     const bg = g.createRadialGradient(cx - r * 0.35, cy - r * 0.4, r * 0.1, cx, cy, r * 1.05);
     bg.addColorStop(0, t.hi);
     bg.addColorStop(0.72, mix(t.hi, t.lo, 0.55));
@@ -588,12 +710,15 @@ const Sprites = (() => {
     g.fillStyle = core;
     g.beginPath(); g.arc(cx, cy, r * 0.75, 0, TAU); g.fill();
     accessory(g, tier, cx, cy, r, t);
-    return { cv, pad, r };
+    return { cv, hv, pad, r };
   }
   function accessory(g, tier, cx, cy, r, t) {
     g.save();
-    g.strokeStyle = hexA("#ffffff", 0.5); g.fillStyle = hexA("#ffffff", 0.4);
-    g.lineWidth = Math.max(1, r * 0.06); g.lineCap = "round";
+    // tier glow color at high alpha: accessories must carry identity at small radii
+    g.strokeStyle = mix(t.glow, "#ffffff", 0.45);
+    g.globalAlpha = 0.85;
+    g.fillStyle = mix(t.glow, "#ffffff", 0.35);
+    g.lineWidth = Math.max(1.5, r * 0.09); g.lineCap = "round";
     switch (tier) {
       case 0: // plankton: cilia
         for (let i = 0; i < 6; i++) {
@@ -609,9 +734,21 @@ const Sprites = (() => {
         g.beginPath(); g.moveTo(cx + r * 0.3, cy - r * 0.85); g.quadraticCurveTo(cx + r * 0.7, cy - r * 1.5, cx + r * 1.1, cy - r * 1.35); g.stroke();
         arcs(g, cx, cy + r * 0.35, r * 0.55, 3, 0.5);
         break;
-      case 2: // shrimp: body stripes + antennae
-        arcs(g, cx, cy, r * 0.8, 3, 0.35);
-        g.beginPath(); g.moveTo(cx + r * 0.5, cy - r * 0.7); g.quadraticCurveTo(cx + r * 1.3, cy - r * 1.2, cx + r * 1.6, cy - r * 0.7); g.stroke();
+      case 2: // shrimp: segmented curved back + fan tail + antennae
+        for (let i = 0; i < 3; i++) {
+          g.beginPath();
+          g.arc(cx - r * 0.1, cy + r * 0.15, r * (0.55 + i * 0.16), -TAU * 0.38, -TAU * 0.06);
+          g.stroke();
+        }
+        g.beginPath();
+        g.moveTo(cx - r * 0.85, cy + r * 0.4);
+        g.lineTo(cx - r * 1.3, cy + r * 0.15);
+        g.moveTo(cx - r * 0.85, cy + r * 0.4);
+        g.lineTo(cx - r * 1.32, cy + r * 0.5);
+        g.moveTo(cx - r * 0.85, cy + r * 0.4);
+        g.lineTo(cx - r * 1.25, cy + r * 0.85);
+        g.stroke();
+        g.beginPath(); g.moveTo(cx + r * 0.55, cy - r * 0.65); g.quadraticCurveTo(cx + r * 1.25, cy - r * 1.15, cx + r * 1.55, cy - r * 0.65); g.stroke();
         break;
       case 3: // jellyfish: skirt + tentacles
         g.beginPath();
@@ -747,14 +884,41 @@ function mix(h1, h2, t) {
   return `rgb(${r},${g},${bl})`;
 }
 
-/* ---------------- background (bubbles, rays, dust) ---------------- */
+/* ---------------- background (bubbles, volumetric rays, dust) — gradients cached ---------------- */
 const Bg = (() => {
   let bubbles = [], dust = [];
+  let bgGrad = null, rayCv = null, builtTheme = -1;
   function rebuild() {
     bubbles = []; dust = [];
-    const n = Math.round(VW * VH / 42000);
+    const n = Math.round(VW * VH / (LOWQ ? 90000 : 42000));
     for (let i = 0; i < n; i++) bubbles.push(spawnBubble(true));
     for (let i = 0; i < n * 2; i++) dust.push({ x: rand(0, VW), y: rand(0, VH), r: rand(0.5, 1.6), a: rand(0.04, 0.14), s: rand(2, 8) });
+    bgGrad = null; rayCv = null; builtTheme = -1;
+  }
+  function buildStatics(g, theme, themeIdx) {
+    bgGrad = g.createLinearGradient(0, 0, 0, VH);
+    bgGrad.addColorStop(0, theme.bgTop);
+    bgGrad.addColorStop(1, theme.bgBot);
+    // one volumetric ray pre-rendered: soft across its width, fading down its length
+    const w = Math.max(60, VW * 0.3);
+    rayCv = document.createElement("canvas");
+    rayCv.width = Math.ceil(w); rayCv.height = Math.ceil(VH);
+    const rg = rayCv.getContext("2d");
+    const across = rg.createLinearGradient(0, 0, w, 0);
+    across.addColorStop(0, theme.ray + "0)");
+    across.addColorStop(0.5, theme.ray + "0.09)");
+    across.addColorStop(1, theme.ray + "0)");
+    rg.fillStyle = across;
+    rg.fillRect(0, 0, w, VH);
+    // vertical falloff
+    const down = rg.createLinearGradient(0, 0, 0, VH);
+    down.addColorStop(0, "rgba(0,0,0,0)");
+    down.addColorStop(0.75, "rgba(0,0,0,0.75)");
+    down.addColorStop(1, "rgba(0,0,0,1)");
+    rg.globalCompositeOperation = "destination-out";
+    rg.fillStyle = down;
+    rg.fillRect(0, 0, w, VH);
+    builtTheme = themeIdx;
   }
   function spawnBubble(anywhere) {
     return { x: rand(0, VW), y: anywhere ? rand(0, VH) : VH + 10, r: rand(1.5, 5), s: rand(14, 42), w: rand(0.4, 1.4), p: rand(0, TAU) };
@@ -766,28 +930,22 @@ const Bg = (() => {
     }
     for (const d of dust) { d.y -= d.s * dt * 0.3; if (d.y < -4) { d.y = VH + 4; d.x = rand(0, VW); } }
   }
-  function draw(g, t, theme) {
-    const grad = g.createLinearGradient(0, 0, 0, VH);
-    grad.addColorStop(0, theme.bgTop);
-    grad.addColorStop(1, theme.bgBot);
-    g.fillStyle = grad;
+  function draw(g, t, theme, themeIdx) {
+    if (!bgGrad || builtTheme !== themeIdx) buildStatics(g, theme, themeIdx);
+    g.fillStyle = bgGrad;
     g.fillRect(0, 0, VW, VH);
-    // god rays
+    // god rays: blit the cached strip 3x with slow sway + skew
     g.save();
     g.globalCompositeOperation = "lighter";
     for (let i = 0; i < 3; i++) {
-      const sway = Math.sin(t * 0.00013 + i * 2.1) * VW * 0.08;
-      const x = VW * (0.2 + i * 0.3) + sway;
-      const w = VW * 0.16;
-      const rg = g.createLinearGradient(x, 0, x + w * 0.4, VH * 0.9);
-      rg.addColorStop(0, theme.ray + "0.05)");
-      rg.addColorStop(1, theme.ray + "0)");
-      g.fillStyle = rg;
-      g.beginPath();
-      g.moveTo(x - w * 0.25, -10); g.lineTo(x + w * 0.25, -10);
-      g.lineTo(x + w * 0.9, VH); g.lineTo(x - w * 0.6, VH);
-      g.closePath(); g.fill();
+      const sway = Math.sin(t * 0.00013 + i * 2.1) * VW * 0.07;
+      const x = VW * (0.12 + i * 0.32) + sway;
+      g.setTransform(DPR, 0, DPR * 0.22, DPR, x * DPR, 0); // slight shear = slanted light
+      g.globalAlpha = 0.8 + 0.2 * Math.sin(t * 0.0003 + i * 1.9);
+      g.drawImage(rayCv, -rayCv.width / 2, 0);
     }
+    g.setTransform(DPR, 0, 0, DPR, 0, 0);
+    g.globalAlpha = 1;
     // dust
     g.fillStyle = "rgba(140,200,255,0.5)";
     for (const d of dust) { g.globalAlpha = d.a; g.beginPath(); g.arc(d.x, d.y, d.r, 0, TAU); g.fill(); }
@@ -808,8 +966,8 @@ const Bg = (() => {
 
 /* ---------------- particles / floating text / shake ---------------- */
 const Fx = (() => {
-  const parts = [], floats = [];
-  let trauma = 0;
+  const parts = [], floats = [], rings = [];
+  let trauma = 0, flash = 0, flashColor = "#ffffff";
   function burst(x, y, color, n, speed, up) {
     for (let i = 0; i < n; i++) {
       const a = rand(0, TAU), sp = rand(speed * 0.3, speed);
@@ -822,6 +980,10 @@ const Fx = (() => {
   function float(x, y, txt, size, color) {
     floats.push({ x, y, txt, size, color: color || "#bfeaff", life: 1 });
   }
+  function ring(x, y, color, r0, r1, dur, lw) {
+    rings.push({ x, y, color, r0, r1, dur: dur || 0.15, lw: lw || 3, t: 0 });
+  }
+  function doFlash(color, amt) { flash = Math.max(flash, amt); flashColor = color; }
   function shake(amt) { trauma = Math.min(1, trauma + amt); }
   function update(dt) {
     for (let i = parts.length - 1; i >= 0; i--) {
@@ -836,13 +998,18 @@ const Fx = (() => {
       f.y -= 46 * dt; f.life -= dt / 0.62;
       if (f.life <= 0) floats.splice(i, 1);
     }
+    for (let i = rings.length - 1; i >= 0; i--) {
+      rings[i].t += dt;
+      if (rings[i].t >= rings[i].dur) rings.splice(i, 1);
+    }
+    flash = Math.max(0, flash - 3.2 * dt);
     trauma = Math.max(0, trauma - 1.4 * dt);
   }
   function offset(t) {
     const s = trauma * trauma;
     return {
-      x: s * 9 * (Math.sin(t * 0.061) + Math.sin(t * 0.127) * 0.6),
-      y: s * 9 * (Math.cos(t * 0.083) + Math.sin(t * 0.151) * 0.6),
+      x: s * 13 * (Math.sin(t * 0.061) + Math.sin(t * 0.127) * 0.6),
+      y: s * 13 * (Math.cos(t * 0.083) + Math.sin(t * 0.151) * 0.6),
       rot: s * 0.011 * Math.sin(t * 0.097),
     };
   }
@@ -853,6 +1020,13 @@ const Fx = (() => {
       g.globalAlpha = Math.max(0, p.life) * 0.9;
       g.fillStyle = p.color;
       g.beginPath(); g.arc(p.x, p.y, p.r * p.life, 0, TAU); g.fill();
+    }
+    for (const r of rings) {
+      const k = r.t / r.dur;
+      g.globalAlpha = (1 - k) * 0.8;
+      g.strokeStyle = r.color;
+      g.lineWidth = Math.max(0.5, r.lw * (1 - k));
+      g.beginPath(); g.arc(r.x, r.y, lerp(r.r0, r.r1, easeOutCubic(k)), 0, TAU); g.stroke();
     }
     g.restore();
     g.globalAlpha = 1;
@@ -871,30 +1045,45 @@ const Fx = (() => {
     }
     g.globalAlpha = 1;
   }
-  return { burst, float, shake, update, offset, draw, get count() { return parts.length; } };
+  function drawFlash(g) {
+    if (flash <= 0.004) return;
+    g.save();
+    g.globalCompositeOperation = "lighter";
+    g.globalAlpha = flash;
+    g.fillStyle = flashColor;
+    g.fillRect(0, 0, VW, VH);
+    g.restore();
+  }
+  return { burst, float, ring, doFlash, drawFlash, shake, update, offset, draw, get count() { return parts.length; } };
 })();
 
 /* ---------------- game ---------------- */
 const Game = (() => {
   /* physics tuning (research: restitution .2, friction .5 feel) */
-  const SUB = 1 / 120, ITER = 6, REST = 0.18, WALL_REST = 0.1, SLOP = 0.4, CORR = 0.6;
+  const SUB = 1 / 120, ITER = 6, REST = 0.20, WALL_REST = 0.1, SLOP = 0.4, CORR = 0.6;
   const REST_THRESH = 60;
 
   let creatures = [];
   let held = null, nextTier = 0, canDrop = false, dropTimer = 0;
-  let aimX = 0, aiming = false;
-  let score = 0, combo = 0, comboTimer = 0, maxCombo = 0;
+  let aimX = 0, aiming = false, hoverAim = false;
+  let score = 0, combo = 0, comboAge = 0, maxCombo = 0, settledT = 0;
   let state = "play"; // play | dying | over | paused(ad)
   let dying = null;
   let dropCount = 0, runSeed = 0, rng = Math.random;
   let acc = 0, lastT = 0;
   let warnLevel = 0;
-  let NOW = performance.now(); // game clock (rAF timestamp; advanceable in headless)
-  let firstDropDone = false, hintT = 0;
+  let NOW = 0; // game clock in ms — advances ONLY while the sim runs (hard pause safe)
+  let firstDropDone = false, hintT = 0, firstMergeDone = false;
   let usedContinue = false, usedDouble = false;
   let maxTierRun = 0;
   let adPaused = false;
   let doubled = false;
+  let hitstopT = 0, scoreFlash = 0, heldSpawnT = 1;
+  const ghosts = []; // merge-absorb animations
+  let chainCv = null, chainMaxTier = -1, chainTheme = -1; // evolution bar cache
+  let discovered = store.get("discovered", 3); // bitmask; tiers 0-1 known from start
+  let slowFrames = 0, lowQuality = false; // adaptive quality
+  let streakN = 0; // cached daily streak (no per-frame storage reads)
 
   const themeIdx = () => clamp(S.theme, 0, THEMES.length - 1);
 
@@ -904,12 +1093,13 @@ const Game = (() => {
       tier, x, y, px: x, py: y, vx: 0, vy: 0, r,
       m: r * r, im: 1 / (r * r),
       angle: rand(-0.2, 0.2), va: 0,
-      sq: 0, sqv: 0,
+      sq: 0, sqv: 0, sqAxis: 0,
       birth: NOW,
       drop: fromDrop ? NOW : 0,
       overT: 0, merging: false, dead: false,
       joyT: 0, blink: rand(1, 5), blinkT: 0,
-      pop: fromDrop ? -1 : 0, // birth pop animation progress; -1 = none
+      impactCd: 0, sleepT: 0, asleep: false,
+      pop: fromDrop ? 1 : 0, // birth pop progress; 1 = no animation; negative = absorb delay
     };
   }
 
@@ -924,19 +1114,31 @@ const Game = (() => {
   }
 
   function reset() {
-    creatures = [];
-    score = 0; combo = 0; comboTimer = 0; maxCombo = 0; dropCount = 0;
+    creatures = []; ghosts.length = 0; mergeQueue.length = 0;
+    score = 0; combo = 0; comboAge = 0; maxCombo = 0; settledT = 0; dropCount = 0;
     usedContinue = false; usedDouble = false; doubled = false;
-    maxTierRun = 0; warnLevel = 0;
+    maxTierRun = 0; warnLevel = 0; hitstopT = 0;
     state = "play"; dying = null;
-    firstDropDone = false; hintT = 0;
+    firstDropDone = false; hintT = 0; firstMergeDone = false;
+    chainMaxTier = -1; // rebuild evolution bar
     if (S.daily) {
       runSeed = dayKey();
       rng = mulberry32(runSeed);
+      // daily streak: consecutive days playing the daily challenge
+      const st = store.get("streak", { last: 0, n: 0 });
+      if (st.last !== dayKey()) {
+        const y = new Date(); y.setDate(y.getDate() - 1);
+        const yesterday = y.getFullYear() * 10000 + (y.getMonth() + 1) * 100 + y.getDate();
+        st.n = st.last === yesterday ? st.n + 1 : 1;
+        st.last = dayKey();
+        store.set("streak", st);
+      }
+      streakN = st.n;
     } else rng = Math.random;
     nextTier = pickSpawnTier();
     spawnHeld();
     S.games++; store.set("games", S.games);
+    Ads.runStarted();
     Ads.gameplayStart();
   }
 
@@ -945,15 +1147,21 @@ const Game = (() => {
     nextTier = pickSpawnTier();
     const r = TIERS[tier].f * L.cw;
     held = { tier, r, x: aimX ? clamp(aimX, L.x0 + r + 2, L.x1 - r - 2) : (L.x0 + L.x1) / 2, bob: 0 };
+    heldSpawnT = 0; // easeOutBack scale-in
     canDrop = true;
   }
 
   function drop() {
     if (!canDrop || !held || state !== "play" || adPaused) return;
-    const c = newCreature(held.tier, held.x, L.dropY, true);
+    SFX.unlock(); // first interaction of the session must be audible (iOS-safe: same gesture)
+    // spawn at the AIM point, not the lagged follow position — taps land where the finger is
+    const r = held.r;
+    const x = clamp(aimX || held.x, L.x0 + r + 2, L.x1 - r - 2);
+    const c = newCreature(held.tier, x, L.yTop - 30 - r, true);
     c.vy = 60;
     creatures.push(c);
     dropCount++;
+    combo = 0; comboAge = 0; // a combo is one drop's chain (Suika semantics)
     if (!firstDropDone) firstDropDone = true;
     held = null; canDrop = false; dropTimer = 0.45;
     SFX.plip();
@@ -961,12 +1169,26 @@ const Game = (() => {
   }
 
   /* ---------- physics ---------- */
+  const pairA = [], pairB = []; // reused flat pair arrays (no per-substep GC)
   function step(h) {
     const G = 2400 * L.scale;
     const cap = 1900 * L.scale;
+    const sleepSpeed = 7 * L.scale;
     for (const c of creatures) {
       if (c.dead) continue;
       c.px = c.x; c.py = c.y;
+      c.impactCd -= h;
+      // engineered quick win: before the first merge, early tier-0 pieces drift gently together
+      if (!firstMergeDone && c.tier === 0 && dropCount <= 3 && c.y + c.r > L.yFloor - c.r * 3) {
+        c.vx += ((L.x0 + L.x1) / 2 - c.x) * 0.9 * h * 60;
+      }
+      // sleep: settled bodies skip integration (battery + jitter)
+      const sp2 = c.vx * c.vx + c.vy * c.vy;
+      if (sp2 < sleepSpeed * sleepSpeed && Math.abs(c.va) < 0.06) {
+        c.sleepT += h;
+        if (c.sleepT > 0.5) c.asleep = true;
+      } else { c.sleepT = 0; c.asleep = false; }
+      if (c.asleep) { c.vx = 0; c.vy = 0; c.va = 0; continue; }
       c.vy += G * h;
       c.vx *= 0.9995; c.vy *= 0.9995;
       const sp = Math.hypot(c.vx, c.vy);
@@ -977,7 +1199,7 @@ const Game = (() => {
     }
     // pairs
     const n = creatures.length;
-    const pairs = [];
+    let np = 0;
     for (let i = 0; i < n; i++) {
       const a = creatures[i];
       if (a.dead) continue;
@@ -986,11 +1208,12 @@ const Game = (() => {
         if (b.dead) continue;
         const rs = a.r + b.r;
         const dx = b.x - a.x, dy = b.y - a.y;
-        if (dx * dx + dy * dy < rs * rs * 1.1) pairs.push([a, b]);
+        if (dx * dx + dy * dy < rs * rs * 1.1) { pairA[np] = a; pairB[np] = b; np++; }
       }
     }
     // merge detection first
-    for (const [a, b] of pairs) {
+    for (let p = 0; p < np; p++) {
+      const a = pairA[p], b = pairB[p];
       if (a.merging || b.merging || a.dead || b.dead) continue;
       if (a.tier !== b.tier) continue;
       if (NOW - a.birth < 60 || NOW - b.birth < 60) continue;
@@ -998,12 +1221,13 @@ const Game = (() => {
       const dx = b.x - a.x, dy = b.y - a.y;
       if (dx * dx + dy * dy < rs * rs) {
         a.merging = true; b.merging = true;
-        mergeQueue.push([a, b]);
+        mergeQueue.push(a, b);
       }
     }
     // solver
     for (let it = 0; it < ITER; it++) {
-      for (const [a, b] of pairs) {
+      for (let p = 0; p < np; p++) {
+        const a = pairA[p], b = pairB[p];
         if (a.dead || b.dead || (a.merging && b.merging)) continue;
         let dx = b.x - a.x, dy = b.y - a.y;
         let d2 = dx * dx + dy * dy;
@@ -1013,11 +1237,12 @@ const Game = (() => {
         if (d < 0.0001) { d = 0.0001; dx = 0.0001; dy = 0; }
         const nx = dx / d, ny = dy / d;
         const pen = rs - d;
-        // positional correction
+        // positional correction (wakes sleepers when real displacement happens)
         if (pen > SLOP) {
           const corr = (pen - SLOP) * CORR / (a.im + b.im);
           a.x -= nx * corr * a.im; a.y -= ny * corr * a.im;
           b.x += nx * corr * b.im; b.y += ny * corr * b.im;
+          if (corr > 0.35) { a.asleep = false; a.sleepT = 0; b.asleep = false; b.sleepT = 0; }
         }
         // impulse
         const rvx = b.vx - a.vx, rvy = b.vy - a.vy;
@@ -1027,16 +1252,17 @@ const Game = (() => {
           const j = -(1 + e) * vn / (a.im + b.im);
           a.vx -= j * a.im * nx; a.vy -= j * a.im * ny;
           b.vx += j * b.im * nx; b.vy += j * b.im * ny;
+          if (Math.abs(vn) > sleepSpeed * 3) { a.asleep = false; a.sleepT = 0; b.asleep = false; b.sleepT = 0; }
           // impact feedback (first iteration only)
           if (it === 0 && vn < -220 * L.scale) {
             const v = clamp(-vn / (1300 * L.scale), 0, 1);
             impact(a, b, v, nx, ny);
           }
-          // friction
+          // friction (0.5 — Suika reference feel)
           const tx = -ny, ty = nx;
           const vt = rvx * tx + rvy * ty;
-          let jt = -vt * 0.35 / (a.im + b.im);
-          const maxF = Math.abs(j) * 0.45;
+          let jt = -vt * 0.5 / (a.im + b.im);
+          const maxF = Math.abs(j) * 0.5;
           jt = clamp(jt, -maxF, maxF);
           a.vx -= jt * a.im * tx; a.vy -= jt * a.im * ty;
           b.vx += jt * b.im * tx; b.vy += jt * b.im * ty;
@@ -1046,9 +1272,21 @@ const Game = (() => {
       }
       // walls & floor
       for (const c of creatures) {
-        if (c.dead) continue;
-        if (c.x - c.r < L.x0) { c.x = L.x0 + c.r; if (c.vx < 0) c.vx = -c.vx * WALL_REST; c.va *= 0.96; }
-        if (c.x + c.r > L.x1) { c.x = L.x1 - c.r; if (c.vx > 0) c.vx = -c.vx * WALL_REST; c.va *= 0.96; }
+        if (c.dead || c.asleep) continue;
+        if (c.x - c.r < L.x0) {
+          const iv = -c.vx;
+          c.x = L.x0 + c.r;
+          if (c.vx < 0) c.vx = -c.vx * WALL_REST;
+          c.va *= 0.96;
+          if (iv > 300 * L.scale) wallImpact(c, clamp(iv / (1300 * L.scale), 0, 1));
+        }
+        if (c.x + c.r > L.x1) {
+          const iv = c.vx;
+          c.x = L.x1 - c.r;
+          if (c.vx > 0) c.vx = -c.vx * WALL_REST;
+          c.va *= 0.96;
+          if (iv > 300 * L.scale) wallImpact(c, clamp(iv / (1300 * L.scale), 0, 1));
+        }
         if (c.y + c.r > L.yFloor) {
           const impactV = c.vy;
           c.y = L.yFloor - c.r;
@@ -1064,63 +1302,87 @@ const Game = (() => {
     // NaN guard
     for (const c of creatures) {
       if (!isFinite(c.x) || !isFinite(c.y)) { c.x = (L.x0 + L.x1) / 2; c.y = L.yTop + 40; c.vx = c.vy = 0; }
+      if (!isFinite(c.angle) || !isFinite(c.va)) { c.angle = 0; c.va = 0; }
     }
   }
 
   const mergeQueue = [];
-  let impactCooldown = 0;
 
   function impact(a, b, v, nx, ny) {
-    if (impactCooldown > 0) return;
-    impactCooldown = 0.05;
+    const axis = Math.atan2(ny, nx); // squash along the contact normal
+    if (a.impactCd <= 0) { a.impactCd = 0.06; squash(a, v * 0.5, axis + Math.PI / 2); }
+    if (b.impactCd <= 0) { b.impactCd = 0.06; squash(b, v * 0.5, axis + Math.PI / 2); }
     const big = Math.max(a.tier, b.tier);
-    SFX.thud(v);
-    squash(a, v * 0.5); squash(b, v * 0.5);
+    SFX.thud(v, big, (a.x + b.x) / 2);
     if (v > 0.5 && big >= 3) {
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
       Fx.burst(mx, my, hexA("#9fd8ff", 0.8), 3, 60 * L.scale, 20);
     }
   }
   function landImpact(c, v) {
-    SFX.thud(v * 0.8);
-    squash(c, v * 0.7);
+    if (c.impactCd > 0) return;
+    c.impactCd = 0.06;
+    SFX.thud(v * 0.8, c.tier, c.x);
+    squash(c, v * 0.7, 0);
     if (v > 0.4) Fx.burst(c.x, L.yFloor - 3, "rgba(140,210,255,0.7)", Math.round(3 + v * 4), 50 * L.scale, 30);
   }
-  function squash(c, k) { c.sqv -= clamp(k, 0, 1) * 4.5; }
+  function wallImpact(c, v) {
+    if (c.impactCd > 0) return;
+    c.impactCd = 0.06;
+    SFX.thud(v * 0.6, c.tier, c.x);
+    squash(c, v * 0.5, Math.PI / 2); // compress along X
+  }
+  function squash(c, k, axis) {
+    c.sqv -= clamp(k, 0, 1) * 12;
+    if (axis !== undefined) c.sqAxis = axis;
+  }
 
   function processMerges() {
-    while (mergeQueue.length) {
-      const [a, b] = mergeQueue.shift();
+    while (mergeQueue.length >= 2) {
+      const a = mergeQueue.shift(), b = mergeQueue.shift();
       if (a.dead || b.dead) { a.merging = b.merging = false; continue; }
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
       a.dead = b.dead = true;
+      // absorb ghosts: parents visibly pull into the midpoint for ~60ms
+      ghosts.push({ tier: a.tier, ax: a.x, ay: a.y, bx: b.x, by: b.y, mx, my, t: 0, aAngle: a.angle, bAngle: b.angle });
       combo++;
-      comboTimer = 1.4;
+      comboAge = 0; settledT = 0;
       if (combo > maxCombo) maxCombo = combo;
       S.merges++;
       const t = a.tier;
       const tt = TIERS[Math.min(t + 1, 10)];
       if (t >= 10) {
-        // two whales: cosmic bonus
+        // two whales: abyssal bonus
         addScore(100, mx, my, 30);
         Fx.burst(mx, my, tt.glow, 40, 260 * L.scale, 60);
+        Fx.ring(mx, my, tt.glow, 10, L.cw * 0.6, 0.45, 14);
+        Fx.doFlash("#ffffff", 0.12);
         Fx.shake(0.55);
         SFX.whaleBirth();
         vibe([40, 50, 80]);
+        hitstopT = Math.max(hitstopT, 0.04);
       } else {
         const nc = newCreature(t + 1, mx, my, false);
         nc.vx = (a.vx + b.vx) * 0.25;
         nc.vy = (a.vy + b.vy) * 0.25 - 40 * L.scale;
-        nc.pop = 0;
+        nc.pop = -0.28; // brief delay while parents absorb, then 0->1.2->1 pop
         nc.joyT = 0.7;
         creatures.push(nc);
         if (t + 1 > maxTierRun) maxTierRun = t + 1;
+        firstMergeDone = true;
         addScore(PTS[t + 1], mx, my, 16 + (t + 1) * 1.2);
+        discover(t + 1, mx, my);
         Fx.burst(mx, my, tt.glow, 8 + (t + 1) * 2.4, (110 + t * 22) * L.scale, 40);
-        Fx.shake(0.08 + (t + 1) * 0.032);
-        SFX.pop(combo - 1, t + 1);
-        vibe(combo >= 3 ? [20, 30, 40] : 25);
-        if (t + 1 === 10) { SFX.whaleBirth(); Fx.shake(0.5); vibe([40, 50, 90]); }
+        Fx.ring(mx, my, tt.glow, nc.r * 0.4, nc.r * 1.6, 0.15, 3);
+        Fx.shake(Math.min(0.06 + (t + 1) * 0.045, 0.5));
+        SFX.pop(combo - 1, t + 1, mx);
+        vibe(combo >= 3 ? [30, 40, 60] : 30);
+        if (t + 1 >= 7) hitstopT = Math.max(hitstopT, 0.04);
+        if (t + 1 === 10) {
+          SFX.whaleBirth(); Fx.shake(0.5); vibe([40, 50, 90]);
+          Fx.ring(mx, my, tt.glow, 10, L.cw * 0.6, 0.45, 14);
+          Fx.doFlash("#ffffff", 0.12);
+        }
       }
       if (combo >= 3) {
         Fx.float(mx, my - 30 * L.scale, T.combo + " ×" + combo, 15 + Math.min(combo, 8), "#ffd678");
@@ -1130,15 +1392,35 @@ const Game = (() => {
     for (let i = creatures.length - 1; i >= 0; i--) if (creatures[i].dead) creatures.splice(i, 1);
   }
 
-  function addScore(base, x, y, size) {
-    score += base;
-    Fx.float(x, y, "+" + base, size, "#bfeaff");
-    checkUnlocks();
+  /* first-ever discovery of a species: name banner + persistence */
+  function discover(tier, x, y) {
+    const bit = 1 << tier;
+    if (discovered & bit) return;
+    discovered |= bit;
+    store.set("discovered", discovered);
+    Fx.float(clamp(x, 90, VW - 90), y - 52 * L.scale, (FR ? "Nouvelle espèce : " : "New species: ") + T.names[tier] + " !", 16, "#7fe0ff");
+    SFX.newBest();
+    vibe([20, 30, 40]);
   }
 
-  function checkUnlocks() {
-    const b = Math.max(score, S.best);
-    // theme unlock toast could go here; kept silent, menu shows locks
+  function addScore(base, x, y, size) {
+    const before = Math.max(score, S.best);
+    score += base;
+    scoreFlash = 1;
+    Fx.float(x, y, "+" + base, size, "#bfeaff");
+    checkUnlocks(before);
+  }
+
+  function checkUnlocks(before) {
+    const now = Math.max(score, S.best);
+    for (let i = 1; i < THEMES.length; i++) {
+      if (before < THEMES[i].need && now >= THEMES[i].need) {
+        Fx.float(VW / 2, VH * 0.38, (FR ? "Ambiance débloquée : " : "Theme unlocked: ") + T.themes[i] + " !", 17, "#ffd678");
+        SFX.newBest();
+        vibe([20, 30, 40]);
+        UI.menuBadge(true);
+      }
+    }
   }
 
   /* ---------- danger & game over ---------- */
@@ -1155,8 +1437,9 @@ const Game = (() => {
       if (top < L.yTop + 60 * L.scale) anyNear = true;
     }
     warnLevel = clamp(maxOver / GRACE_MS, 0, 1);
-    if (anyNear && warnLevel < 0.15) warnLevel = 0.15;
-    if (warnLevel > 0.35) SFX.dangerTick();
+    if (anyNear && warnLevel < 0.25) warnLevel = 0.25;
+    if (warnLevel > 0.3) SFX.dangerTick(warnLevel);
+    SFX.duckAmbience(warnLevel);
     if (maxOver >= GRACE_MS && state === "play") gameOver();
   }
 
@@ -1220,11 +1503,12 @@ const Game = (() => {
   function doubleScore() {
     usedDouble = true; doubled = true;
     score *= 2;
-    UI.refreshOverScore(score, S.daily ? S.dailyBest.score : S.best);
+    let isNew = false;
     if (S.daily) {
-      if (score > S.dailyBest.score) { S.dailyBest.score = score; store.set("dailyBest", S.dailyBest); }
-    } else if (score > S.best) { S.best = score; store.set("best", S.best); }
-    SFX.newBest();
+      if (score > S.dailyBest.score) { S.dailyBest.score = score; store.set("dailyBest", S.dailyBest); isNew = true; }
+    } else if (score > S.best) { S.best = score; store.set("best", S.best); isNew = true; }
+    UI.refreshOverScore(score, S.daily ? S.dailyBest.score : S.best, isNew);
+    if (isNew) SFX.newBest(); else SFX.ui();
   }
 
   /* ---------- frame ---------- */
@@ -1233,19 +1517,27 @@ const Game = (() => {
     tick(t);
   }
   function tick(t) {
-    NOW = t;
     if (!lastT) { lastT = t; return; }
     let dt = (t - lastT) / 1000;
     lastT = t;
     if (dt > 0.05) dt = 0.05;
+    // adaptive quality: sustained slow frames -> drop DPR to 1, thin ambient particles
+    if (dt > 0.024) { slowFrames++; } else if (slowFrames > 0) slowFrames--;
+    if (slowFrames > 60 && !lowQuality) {
+      lowQuality = true; LOWQ = true;
+      layout();
+    }
     if (adPaused) { render(t, 0); return; }
+    NOW += dt * 1000; // game clock: frozen during ad/menu pause so immunity timers stay fair
+    if (hitstopT > 0) { hitstopT -= dt; Fx.update(dt); render(t, acc / SUB); return; }
 
     // input-follow for held
     if (held) {
       const target = clamp(aimX || held.x, L.x0 + held.r + 2, L.x1 - held.r - 2);
-      held.x = lerp(held.x, target, 1 - Math.pow(0.0001, dt));
+      held.x = lerp(held.x, target, 1 - Math.pow(0.000000001, dt));
       held.bob += dt;
     }
+    if (heldSpawnT < 1) heldSpawnT = Math.min(1, heldSpawnT + dt / 0.18);
     if (!canDrop && state === "play" && !held) {
       dropTimer -= dt;
       if (dropTimer <= 0) spawnHeld();
@@ -1261,19 +1553,29 @@ const Game = (() => {
         processMerges();
         acc -= SUB; steps++;
       }
-      impactCooldown -= dt;
     }
-    // combo settle
-    if (comboTimer > 0) {
-      comboTimer -= dt;
-      if (comboTimer <= 0) combo = 0;
+    // combo resets when the board has actually settled (not a blind timer)
+    if (combo > 0) {
+      comboAge += dt;
+      let allSettled = true;
+      for (const c of creatures) {
+        if (!c.asleep && (c.vx * c.vx + c.vy * c.vy) > REST_THRESH * REST_THRESH * L.scale * L.scale) { allSettled = false; break; }
+      }
+      if (allSettled) settledT += dt; else settledT = 0;
+      if (settledT > 0.3 || comboAge > 4) combo = 0;
     }
+    // merge-absorb ghosts
+    for (let i = ghosts.length - 1; i >= 0; i--) {
+      ghosts[i].t += dt;
+      if (ghosts[i].t > 0.06) ghosts.splice(i, 1);
+    }
+    if (scoreFlash > 0) scoreFlash = Math.max(0, scoreFlash - dt / 0.15);
     // springs & faces
     for (const c of creatures) {
-      c.sqv += (-260 * c.sq - 16 * c.sqv) * dt;
+      c.sqv += (-900 * c.sq - 36 * c.sqv) * dt;
       c.sq += c.sqv * dt;
       c.sq = clamp(c.sq, -0.42, 0.42);
-      if (c.pop >= 0 && c.pop < 1) c.pop = Math.min(1, c.pop + dt / 0.2);
+      if (c.pop < 1) c.pop = Math.min(1, c.pop + dt / 0.2);
       if (c.joyT > 0) c.joyT -= dt;
       c.blinkT -= dt;
       if (c.blinkT < -0.12) { c.blink = rand(2, 6); c.blinkT = c.blink; }
@@ -1290,14 +1592,29 @@ const Game = (() => {
   function render(t, alpha) {
     const theme = THEMES[themeIdx()];
     const off = Fx.offset(t);
-    Bg.draw(ctx, t, theme);
+    Bg.draw(ctx, t, theme, themeIdx());
     ctx.save();
     ctx.translate(VW / 2 + off.x, VH / 2 + off.y);
     ctx.rotate(off.rot);
     ctx.translate(-VW / 2, -VH / 2);
 
     drawContainer(theme, t);
-    // creatures
+    // pass 1: all halos additively — bioluminescence sums through the pile
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (const c of creatures) {
+      const ix = lerp(c.px, c.x, alpha), iy = lerp(c.py, c.y, alpha);
+      const spr = Sprites.get(c.tier, c.r);
+      const d = spr.r + spr.pad;
+      const breathe = 0.82 + 0.18 * Math.sin(t * 0.0021 + c.birth % 1000);
+      ctx.globalAlpha = breathe;
+      ctx.drawImage(spr.hv, ix - d, iy - d, d * 2, d * 2);
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+    // merge-absorb ghosts (parents pulling into the midpoint)
+    for (const gh of ghosts) drawGhost(ctx, gh);
+    // pass 2: bodies + faces
     for (const c of creatures) {
       const ix = lerp(c.px, c.x, alpha), iy = lerp(c.py, c.y, alpha);
       drawCreature(ctx, c, ix, iy, t);
@@ -1307,15 +1624,38 @@ const Game = (() => {
     Fx.draw(ctx);
     ctx.restore();
     drawHud(theme, t);
+    Fx.drawFlash(ctx);
   }
 
+  function drawGhost(g, gh) {
+    const k = gh.t / 0.06;
+    const spr = Sprites.get(gh.tier, TIERS[gh.tier].f * L.cw);
+    const d = spr.r + spr.pad;
+    const sc = lerp(1, 0.55, k);
+    for (const [x0, y0, an] of [[gh.ax, gh.ay, gh.aAngle], [gh.bx, gh.by, gh.bAngle]]) {
+      const x = lerp(x0, gh.mx, easeOutCubic(k)), y = lerp(y0, gh.my, easeOutCubic(k));
+      g.save();
+      g.translate(x, y);
+      g.rotate(an);
+      g.scale(sc, sc);
+      g.globalAlpha = 1 - k * 0.4;
+      g.drawImage(spr.cv, -d, -d, d * 2, d * 2);
+      g.restore();
+    }
+    g.globalAlpha = 1;
+  }
+
+  let contGrad = null, contGradL = null;
   function drawContainer(theme, t) {
     const g = ctx;
-    // interior subtle tint
-    const grad = g.createLinearGradient(0, L.yTop, 0, L.yFloor);
-    grad.addColorStop(0, "rgba(90,160,255,0.03)");
-    grad.addColorStop(1, "rgba(90,160,255,0.07)");
-    g.fillStyle = grad;
+    // interior subtle tint (gradient cached per layout)
+    if (!contGrad || contGradL !== L) {
+      contGrad = g.createLinearGradient(0, L.yTop, 0, L.yFloor);
+      contGrad.addColorStop(0, "rgba(90,160,255,0.03)");
+      contGrad.addColorStop(1, "rgba(90,160,255,0.07)");
+      contGradL = L;
+    }
+    g.fillStyle = contGrad;
     g.fillRect(L.x0, L.wallTop, L.cw, L.yFloor - L.wallTop);
     // walls
     g.lineCap = "round";
@@ -1355,12 +1695,29 @@ const Game = (() => {
     const pulse = 0.5 + 0.5 * Math.sin(t * (0.004 + w * 0.012));
     const alpha = 0.16 + w * 0.75 * (0.6 + 0.4 * pulse);
     const col = w > 0.35 ? "#ff5f6e" : theme.wall;
+    // outline-pulse the endangered creatures so the threat reads on the piece itself
+    if (w > 0.3) {
+      g.save();
+      g.globalCompositeOperation = "lighter";
+      for (const c of creatures) {
+        if (c.overT > 250) {
+          g.globalAlpha = 0.35 + 0.45 * pulse;
+          g.strokeStyle = "#ff5f6e";
+          g.lineWidth = 2.5;
+          g.beginPath(); g.arc(c.x, c.y, c.r + 3, 0, TAU); g.stroke();
+        }
+      }
+      g.restore();
+      g.globalAlpha = 1;
+    }
     g.save();
     g.strokeStyle = hexA(col, alpha);
     g.lineWidth = 2;
     g.setLineDash([9, 8]);
+    g.lineDashOffset = -(t * (0.01 + w * 0.05)); // marching ants accelerate with danger
     g.beginPath(); g.moveTo(L.x0 + 3, L.yTop); g.lineTo(L.x1 - 3, L.yTop); g.stroke();
     g.setLineDash([]);
+    g.lineDashOffset = 0;
     // end markers
     g.fillStyle = hexA(col, alpha);
     for (const x of [L.x0 + 8, L.x1 - 8]) {
@@ -1382,17 +1739,27 @@ const Game = (() => {
   function drawCreature(g, c, x, y, t) {
     const spr = Sprites.get(c.tier, c.r);
     let sc = 1;
-    if (c.pop >= 0 && c.pop < 1) {
-      const p = c.pop;
+    if (c.pop < 1) {
+      const p = Math.max(c.pop, 0);
+      if (p <= 0) return; // absorb delay: child not visible yet
       sc = p < 0.55 ? lerp(0.1, 1.2, easeOutCubic(p / 0.55)) : lerp(1.2, 1, easeInOutQuad((p - 0.55) / 0.45));
     }
     const breathe = 1 + 0.013 * Math.sin(t * 0.0021 + c.birth % 1000);
-    const sx = (1 - c.sq * 0.9) * sc * breathe;
-    const sy = (1 + c.sq) * sc * (2 - breathe);
+    // falling: stretch along velocity for the classic stretch->impact->squash arc
+    const fallStretch = (!c.asleep && c.vy > 300 * L.scale) ? clamp(c.vy / (3500 * L.scale), 0, 0.06) : 0;
+    const sx = (1 - c.sq * 0.9) * sc * breathe * (1 - fallStretch * 0.6);
+    const sy = (1 + c.sq) * sc * (2 - breathe) * (1 + fallStretch);
     g.save();
     g.translate(x, y);
-    g.rotate(c.angle);
-    g.scale(sx, sy);
+    // squash applied in the impact-axis frame, sprite rotation applied after
+    if (c.sqAxis) {
+      g.rotate(c.sqAxis);
+      g.scale(sx, sy);
+      g.rotate(c.angle - c.sqAxis);
+    } else {
+      g.scale(sx, sy);
+      g.rotate(c.angle);
+    }
     const d = (spr.r + spr.pad);
     g.drawImage(spr.cv, -d, -d, d * 2, d * 2);
     drawFace(g, c, t);
@@ -1448,7 +1815,7 @@ const Game = (() => {
     if (!held || state !== "play") return;
     const g = ctx;
     const bobY = Math.sin(held.bob * 3.1) * 3;
-    const y = L.dropY + bobY;
+    const y = L.yTop - 30 - held.r + bobY; // held piece fully above the danger line
     // aim guide
     if (aiming) {
       let landY = L.yFloor - held.r;
@@ -1470,18 +1837,23 @@ const Game = (() => {
       g.beginPath(); g.arc(held.x, landY, held.r, 0, TAU); g.stroke();
       g.restore();
     }
-    const fake = { tier: held.tier, r: held.r, sq: 0, pop: -1, joyT: 0, blinkT: 1, overT: 0, vx: 0, drop: 0, birth: 0, angle: 0 };
+    const fake = { tier: held.tier, r: held.r, sq: 0, pop: 1, joyT: 0, blinkT: 1, overT: 0, vx: 0, drop: 0, birth: 0, angle: 0, asleep: true, vy: 0 };
+    const spawnScale = heldSpawnT < 1 ? easeOutBack(heldSpawnT) : 1;
     g.save();
     g.translate(held.x, y);
+    g.scale(spawnScale, spawnScale);
     g.scale(1 + Math.sin(held.bob * 3.1) * 0.012, 1 - Math.sin(held.bob * 3.1) * 0.012);
     const spr = Sprites.get(held.tier, held.r);
     const d = spr.r + spr.pad;
+    g.save();
+    g.globalCompositeOperation = "lighter";
+    g.drawImage(spr.hv, -d, -d, d * 2, d * 2);
+    g.restore();
     g.drawImage(spr.cv, -d, -d, d * 2, d * 2);
-    g.translate(0, 0);
     drawFace(g, fake, t);
     g.restore();
-    // first-time hint
-    if (!firstDropDone && hintT > 0.8) {
+    // first-time hint (only for genuinely new players)
+    if (!firstDropDone && hintT > 0.8 && S.games <= 3) {
       const a = Math.min(1, (hintT - 0.8) / 0.5) * (0.6 + 0.4 * Math.sin(t * 0.004));
       g.globalAlpha = a;
       g.fillStyle = "#9fd8ff";
@@ -1496,51 +1868,85 @@ const Game = (() => {
     }
   }
 
+  function buildChainCv(themeIdx) {
+    const rBase = 4.4, rStep = 1.35;
+    let totalW = 0;
+    for (let i = 0; i < 11; i++) totalW += (rBase + i * rStep) * 2 + 7;
+    const h = 48;
+    chainCv = document.createElement("canvas");
+    chainCv.width = Math.ceil(totalW * DPR); chainCv.height = Math.ceil(h * DPR);
+    const g = chainCv.getContext("2d");
+    g.scale(DPR, DPR);
+    let cx = 0;
+    const cy = h / 2;
+    for (let i = 0; i < 11; i++) {
+      const rr = rBase + i * rStep;
+      cx += rr;
+      const ti = TIERS[i];
+      const reached = i <= maxTierRun;
+      g.globalAlpha = reached ? 1 : 0.28;
+      const cg = g.createRadialGradient(cx - rr * 0.3, cy - rr * 0.3, 0.5, cx, cy, rr * 1.2);
+      cg.addColorStop(0, ti.hi); cg.addColorStop(1, ti.lo);
+      g.fillStyle = cg;
+      g.beginPath(); g.arc(cx, cy, rr, 0, TAU); g.fill();
+      cx += rr + 7;
+    }
+    g.globalAlpha = 1;
+    chainCv._totalW = totalW; chainCv._h = h;
+    chainMaxTier = maxTierRun; chainTheme = themeIdx;
+  }
+
   function drawHud(theme, t) {
     const g = ctx;
     const safeTop = L.safeTop;
     g.textBaseline = "top";
-    // score
+    // score with gain pulse (1 -> 1.22 -> 1, easeOutBack-flavored via scoreFlash)
+    const pulse = 1 + 0.22 * easeOutCubic(scoreFlash);
+    g.save();
+    g.translate(VW / 2, safeTop + 6 + 15);
+    g.scale(pulse, pulse);
     g.textAlign = "center";
     g.font = `800 30px ui-rounded, "SF Pro Rounded", "Segoe UI", system-ui, sans-serif`;
     g.fillStyle = "#eaf6ff";
-    g.fillText(String(score), VW / 2, safeTop + 6);
-    g.save();
+    g.fillText(String(score), 0, -15);
     g.globalCompositeOperation = "lighter";
-    g.globalAlpha = 0.35;
+    g.globalAlpha = 0.35 + scoreFlash * 0.3;
     g.fillStyle = theme.wall;
-    g.fillText(String(score), VW / 2, safeTop + 6);
+    g.fillText(String(score), 0, -15);
     g.restore();
-    // best
+    // best (updates live — chasing the record is the loop)
+    g.textAlign = "center";
     g.font = `700 12px ui-rounded, "Segoe UI", system-ui, sans-serif`;
     g.fillStyle = "#7fa8c9";
-    const bestVal = S.daily ? (S.dailyBest.day === dayKey() ? S.dailyBest.score : 0) : S.best;
+    const bestBase = S.daily ? (S.dailyBest.day === dayKey() ? S.dailyBest.score : 0) : S.best;
+    const bestVal = Math.max(bestBase, score);
+    g.fillStyle = score > 0 && score >= bestBase && bestBase > 0 ? "#ffd678" : "#7fa8c9";
     g.fillText("★ " + bestVal, VW / 2, safeTop + 40);
-    // daily badge
+    // daily badge + streak
     if (S.daily) {
       g.font = `800 10px ui-rounded, "Segoe UI", system-ui, sans-serif`;
       g.fillStyle = "#ffd678";
-      g.fillText(T.daybadge, VW / 2, safeTop + 56);
+      g.fillText(T.daybadge + (streakN > 1 ? "  🔥" + streakN : ""), VW / 2, safeTop + 56);
     }
-    // next preview
+    // next preview: the actual creature sprite, readable identity
     const nx = VW - 44, ny = safeTop + 78;
     g.font = `700 10px ui-rounded, "Segoe UI", system-ui, sans-serif`;
     g.fillStyle = "#7fa8c9";
     g.textAlign = "center";
     g.fillText(FR ? "SUIVANT" : "NEXT", nx, ny - 26);
-    const pr = 15;
-    const tn = TIERS[nextTier];
-    const pg = g.createRadialGradient(nx - 4, ny + pr * 0.5, 2, nx, ny + pr, pr * 1.4);
-    pg.addColorStop(0, tn.hi); pg.addColorStop(1, tn.lo);
-    g.fillStyle = pg;
-    g.beginPath(); g.arc(nx, ny + pr, pr, 0, TAU); g.fill();
+    const pr = 16;
+    const spr = Sprites.get(nextTier, pr);
+    const pd = spr.r + spr.pad;
     g.save();
     g.globalCompositeOperation = "lighter";
-    g.globalAlpha = 0.4;
-    const pglow = g.createRadialGradient(nx, ny + pr, pr * 0.4, nx, ny + pr, pr * 1.8);
-    pglow.addColorStop(0, hexA(tn.glow, 0.5)); pglow.addColorStop(1, hexA(tn.glow, 0));
-    g.fillStyle = pglow;
-    g.beginPath(); g.arc(nx, ny + pr, pr * 1.8, 0, TAU); g.fill();
+    g.globalAlpha = 0.55;
+    g.drawImage(spr.hv, nx - pd, ny + pr - pd, pd * 2, pd * 2);
+    g.restore();
+    g.globalAlpha = 1;
+    g.drawImage(spr.cv, nx - pd, ny + pr - pd, pd * 2, pd * 2);
+    g.save();
+    g.translate(nx, ny + pr);
+    drawFace(g, { tier: nextTier, r: pr, sq: 0, pop: 1, joyT: 0, blinkT: 1, overT: 0, vx: 0, drop: 0, birth: 0, angle: 0, asleep: true, vy: 0 }, t);
     g.restore();
     // combo (during play)
     if (combo >= 2 && state === "play") {
@@ -1549,35 +1955,28 @@ const Game = (() => {
       g.textAlign = "left";
       g.fillText("×" + combo, 16, safeTop + 78);
     }
-    // evolution chain (bottom)
-    const cyBar = VH - 24;
-    let cx = 0;
-    let totalW = 0;
-    const rBase = 4.4, rStep = 1.35;
-    for (let i = 0; i < 11; i++) totalW += (rBase + i * rStep) * 2 + 7;
-    cx = (VW - totalW) / 2;
-    for (let i = 0; i < 11; i++) {
-      const rr = rBase + i * rStep;
-      cx += rr;
-      const ti = TIERS[i];
-      const reached = i <= maxTierRun;
-      g.globalAlpha = reached ? 1 : 0.28;
-      const cg = g.createRadialGradient(cx - rr * 0.3, cyBar - rr * 0.3, 0.5, cx, cyBar, rr * 1.2);
-      cg.addColorStop(0, ti.hi); cg.addColorStop(1, ti.lo);
-      g.fillStyle = cg;
-      g.beginPath(); g.arc(cx, cyBar, rr, 0, TAU); g.fill();
-      if (reached && i === maxTierRun && i > 0) {
-        g.save();
-        g.globalCompositeOperation = "lighter";
-        g.globalAlpha = 0.4 + 0.25 * Math.sin(t * 0.005);
-        const gg = g.createRadialGradient(cx, cyBar, rr * 0.3, cx, cyBar, rr * 2);
-        gg.addColorStop(0, hexA(ti.glow, 0.6)); gg.addColorStop(1, hexA(ti.glow, 0));
-        g.fillStyle = gg;
-        g.beginPath(); g.arc(cx, cyBar, rr * 2, 0, TAU); g.fill();
-        g.restore();
-      }
+    // evolution chain (cached; only the active-dot glow animates)
+    if (!chainCv || chainMaxTier !== maxTierRun || chainTheme !== themeIdx()) buildChainCv(themeIdx());
+    const cyBar = VH - 24 - L.safeBottom;
+    const tw = chainCv._totalW, chH = chainCv._h;
+    const bx = (VW - tw) / 2;
+    g.drawImage(chainCv, bx, cyBar - chH / 2, tw, chH);
+    if (maxTierRun > 0) {
+      // live glow on the highest reached dot
+      const rBase = 4.4, rStep = 1.35;
+      let cx = bx;
+      for (let i = 0; i < maxTierRun; i++) cx += (rBase + i * rStep) * 2 + 7;
+      cx += rBase + maxTierRun * rStep;
+      const rr = rBase + maxTierRun * rStep;
+      const ti = TIERS[maxTierRun];
+      const gspr = Sprites.get(maxTierRun, rr);
+      const gd = gspr.r + gspr.pad;
+      g.save();
+      g.globalCompositeOperation = "lighter";
+      g.globalAlpha = 0.5 + 0.3 * Math.sin(t * 0.005);
+      g.drawImage(gspr.hv, cx - gd, cyBar - gd, gd * 2, gd * 2);
+      g.restore();
       g.globalAlpha = 1;
-      cx += rr + 7;
     }
   }
 
@@ -1596,8 +1995,10 @@ const Game = (() => {
     releaseAim() { aiming = false; },
     adPause(on) { adPaused = on; },
     pauseForMenu(on) { adPaused = on; },
+    rescaleHeld() { if (held) { held.r = TIERS[held.tier].f * L.cw; held.x = clamp(held.x, L.x0 + held.r + 2, L.x1 - held.r - 2); } },
     get state() { return state; },
     get usedContinue() { return usedContinue; },
+    get chainCanvas() { return chainCv; },
     relayout: layout,
   };
 })();
@@ -1612,6 +2013,7 @@ const UI = (() => {
   function txt() {
     $("ovTitle").textContent = T.gameOver;
     $("btnRestart").textContent = T.restart;
+    $("btnDaily").textContent = S.daily ? T.dailyOff : T.dailyBtn;
     $("btnContinue").textContent = Ads.adLabel(T.cont, T.contAd);
     $("btnDouble").textContent = Ads.adLabel(T.dbl, T.dblAd);
     $("lblSound").textContent = T.sound;
@@ -1628,7 +2030,9 @@ const UI = (() => {
     $("swSound").classList.toggle("on", S.sound);
     $("swHaptics").classList.toggle("on", S.haptics);
     $("swDaily").classList.toggle("on", S.daily);
-    btnMute.textContent = S.sound ? "🔊" : "🔇";
+    $("lblDaily").textContent = T.daily;
+    $("icoSoundOn").style.display = S.sound ? "" : "none";
+    $("icoSoundOff").style.display = S.sound ? "none" : "";
     $("menuStats").textContent = T.stats(S.games, S.merges);
     // themes
     const row = $("themeRow");
@@ -1654,17 +2058,42 @@ const UI = (() => {
     });
   }
 
+  let countUpRaf = 0;
+  function countUp(el, target) {
+    cancelAnimationFrame(countUpRaf);
+    if (document.hidden) { el.textContent = target; return; }
+    const t0 = performance.now();
+    const dur = Math.min(600, 150 + target * 2);
+    const stepFn = now => {
+      const k = clamp((now - t0) / dur, 0, 1);
+      el.textContent = Math.round(target * easeOutCubic(k));
+      if (k < 1) countUpRaf = requestAnimationFrame(stepFn);
+    };
+    countUpRaf = requestAnimationFrame(stepFn);
+  }
   function showGameOver(score, best, isNew, usedCont, usedDbl) {
-    $("ovScore").textContent = score;
+    countUp($("ovScore"), score);
     $("ovBest").innerHTML = `${T.best} <b>${best}</b>`;
     $("nbBadge").style.display = isNew && score > 0 ? "" : "none";
-    $("btnContinue").style.display = usedCont ? "none" : "";
+    // near-miss framing: the genre's retry fuel
+    const nm = $("nearMiss");
+    if (!isNew && best > 0 && score >= best * 0.6 && score < best) {
+      const p = Math.round(score / best * 100);
+      $("nearMissTxt").textContent = T.nearMiss(p);
+      $("nearMissBar").style.width = "0%";
+      nm.style.display = "";
+      setTimeout(() => { $("nearMissBar").style.width = p + "%"; }, 150);
+    } else nm.style.display = "none";
+    $("btnContinue").style.display = usedCont || score === 0 ? "none" : "";
     $("btnDouble").style.display = usedDbl || score === 0 ? "none" : "";
+    $("btnDaily").textContent = S.daily ? T.dailyOff : T.dailyBtn;
     ovOver.classList.add("show");
   }
-  function refreshOverScore(score, best) {
-    $("ovScore").textContent = score;
+  function refreshOverScore(score, best, isNew) {
+    countUp($("ovScore"), score);
     $("ovBest").innerHTML = `${T.best} <b>${best}</b>`;
+    if (isNew) $("nbBadge").style.display = "";
+    $("nearMiss").style.display = "none";
     $("btnDouble").style.display = "none";
   }
   function hideGameOver() { ovOver.classList.remove("show"); }
@@ -1678,16 +2107,19 @@ const UI = (() => {
     });
     btnMenu.addEventListener("click", () => {
       SFX.ui(); vibe(8);
+      menuBadge(false);
       syncSwitches();
       ovMenu.classList.add("show");
       Game.pauseForMenu(true);
+      Ads.gameplayStop();
     });
     $("btnCloseMenu").addEventListener("click", () => {
       SFX.ui(); ovMenu.classList.remove("show"); Game.pauseForMenu(false);
+      if (Game.state === "play") Ads.gameplayStart();
     });
     $("btnMenuRestart").addEventListener("click", () => {
       SFX.ui(); ovMenu.classList.remove("show"); Game.pauseForMenu(false);
-      hideGameOver(); Game.reset();
+      Ads.maybeInterstitial("menu_restart", () => { hideGameOver(); Game.reset(); });
     });
     $("swSound").addEventListener("click", () => {
       S.sound = !S.sound; store.set("sound", S.sound);
@@ -1698,9 +2130,19 @@ const UI = (() => {
       syncSwitches(); vibe(20); SFX.ui();
     });
     $("swDaily").addEventListener("click", () => {
-      S.daily = !S.daily;
+      S.daily = !S.daily; store.set("daily", S.daily);
       syncSwitches(); SFX.ui();
+      // never nuke a live run: mid-game toggles apply on the next dive
+      if (Game.state === "play" && Game.score > 0) {
+        $("lblDaily").textContent = T.daily + " · " + T.dailyPending;
+        return;
+      }
       ovMenu.classList.remove("show"); Game.pauseForMenu(false);
+      hideGameOver(); Game.reset();
+    });
+    $("btnDaily").addEventListener("click", () => {
+      S.daily = !S.daily; store.set("daily", S.daily);
+      SFX.ui(); vibe(10);
       hideGameOver(); Game.reset();
     });
     $("btnRestart").addEventListener("click", () => {
@@ -1718,25 +2160,33 @@ const UI = (() => {
       SFX.ui();
       Ads.rewarded("double", () => Game.doubleScore(), () => { });
     });
-    // install
-    window.addEventListener("beforeinstallprompt", e => {
-      e.preventDefault();
-      deferredPrompt = e;
-      $("btnInstall").style.display = "";
-    });
-    $("btnInstall").addEventListener("click", async () => {
-      if (!deferredPrompt) return;
-      deferredPrompt.prompt();
-      await deferredPrompt.userChoice;
-      deferredPrompt = null;
-      $("btnInstall").style.display = "none";
-    });
-    // iOS hint (once, after first game over)
-    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-    const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
-    if (isIOS && !standalone && !S.iosHintShown) {
-      UI.iosHintPending = true;
+    // install — ONLY when standalone (portals reject install prompts inside their iframe)
+    if (Ads.standalone) {
+      window.addEventListener("beforeinstallprompt", e => {
+        e.preventDefault();
+        deferredPrompt = e;
+        $("btnInstall").style.display = "";
+      });
+      $("btnInstall").addEventListener("click", async () => {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        await deferredPrompt.userChoice;
+        deferredPrompt = null;
+        $("btnInstall").style.display = "none";
+      });
+      // iOS/iPadOS hint (once, after first game over); iPadOS 13+ reports Macintosh
+      const ua = navigator.userAgent;
+      const isIOS = /iphone|ipad|ipod/i.test(ua) || (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
+      const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+      if (isIOS && !standalone && !S.iosHintShown) {
+        UI.iosHintPending = true;
+      }
     }
+  }
+  function menuBadge(on) {
+    btnMenu.style.boxShadow = on
+      ? "0 0 0 1px rgba(120,200,255,.14), 0 4px 16px rgba(0,0,0,.4), 0 0 14px rgba(255,214,120,.75)"
+      : "";
   }
   function maybeIOSHint() {
     if (!UI.iosHintPending) return;
@@ -1748,7 +2198,7 @@ const UI = (() => {
     setTimeout(() => el.classList.remove("show"), 7000);
     el.addEventListener("click", () => el.classList.remove("show"));
   }
-  return { wire, showGameOver, refreshOverScore, hideGameOver, maybeIOSHint, iosHintPending: false };
+  return { wire, showGameOver, refreshOverScore, hideGameOver, maybeIOSHint, menuBadge, iosHintPending: false };
 })();
 
 /* ---------------- input ---------------- */
@@ -1761,6 +2211,7 @@ const UI = (() => {
   }, { passive: false });
   canvas.addEventListener("pointermove", e => {
     if (pointerDown) Game.setAim(e.clientX, true);
+    else if (e.pointerType === "mouse") Game.setAim(e.clientX, false); // desktop hover-aim parity
   });
   window.addEventListener("pointerup", e => {
     if (!pointerDown) return;
@@ -1775,6 +2226,9 @@ const UI = (() => {
   });
   canvas.addEventListener("touchmove", e => e.preventDefault(), { passive: false });
   canvas.addEventListener("contextmenu", e => e.preventDefault());
+  // iOS pinch-zoom (user-scalable=no is ignored since iOS 10)
+  document.addEventListener("gesturestart", e => e.preventDefault());
+  document.addEventListener("gesturechange", e => e.preventDefault());
   // keyboard (desktop / accessibility)
   let kbX = null;
   window.addEventListener("keydown", e => {
@@ -1820,8 +2274,9 @@ const UI = (() => {
   });
 })();
 
-/* ---------------- PWA ---------------- */
+/* ---------------- PWA (standalone only — never inside a portal iframe) ---------------- */
 if ("serviceWorker" in navigator && !/[?&](headless|nosw)=1/.test(location.search) &&
+  window.top === window &&
   (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("sw.js").catch(() => { });
@@ -1829,9 +2284,13 @@ if ("serviceWorker" in navigator && !/[?&](headless|nosw)=1/.test(location.searc
 }
 
 /* ---------------- boot ---------------- */
+document.documentElement.lang = FR ? "fr" : "en";
 Ads.init();
 UI.wire();
 Game.init();
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) store.set("merges", S.merges);
+});
 </script>
 </body>
 </html>
