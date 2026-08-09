@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#040a16">
-<meta name="description" content="Abyss Drop — fusionne les créatures bioluminescentes des abysses. Un puzzle physique hypnotique.">
+<meta name="description" content="Abyss Drop — merge the bioluminescent creatures of the deep in this hypnotic physics puzzle. Fusionne les créatures des abysses.">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Abyss Drop">
@@ -157,7 +157,7 @@
 
 <script>
 "use strict";
-window.__BUILD = "r3";
+window.__BUILD = "r4";
 /* =====================================================================
    ABYSS DROP — bioluminescent merge-drop
    Single-file vanilla JS · custom fixed-timestep circle physics ·
@@ -264,6 +264,8 @@ function vibe(p) { if (S.haptics && canVibe) { try { navigator.vibrate(p); } cat
 /* ---------------- audio (all synthesized) ---------------- */
 const SFX = (() => {
   let ctx = null, master = null, comp = null, ambGain = null, unlocked = false, lastThud = 0, lastTick = 0;
+  let wantSuspended = false; // deliberate suspend (tab hidden) must not be undone by auto-resume
+  let lastDuck = -1;
   const PENT = [0, 4, 7, 9, 14]; // C E G A D — wide arpeggio contour (never dissonant)
   function ensure() {
     if (ctx) return true;
@@ -278,12 +280,13 @@ const SFX = (() => {
       master = ctx.createGain();
       master.gain.value = S.sound ? 0.8 : 0;
       master.connect(comp);
-      ctx.onstatechange = () => { if (unlocked && ctx.state !== "running") ctx.resume().catch(() => { }); };
+      ctx.onstatechange = () => { if (unlocked && !wantSuspended && ctx.state !== "running") ctx.resume().catch(() => { }); };
     } catch (e) { return false; }
     return true;
   }
   function unlock() {
     if (!ensure()) return;
+    wantSuspended = false;
     if (ctx.state !== "running") ctx.resume().catch(() => { });
     if (!unlocked) {
       unlocked = true;
@@ -294,8 +297,8 @@ const SFX = (() => {
       startAmbience();
     }
   }
-  function resume() { if (ctx && ctx.state !== "running") ctx.resume().catch(() => { }); }
-  function suspend() { if (ctx && ctx.state === "running") ctx.suspend().catch(() => { }); }
+  function resume() { wantSuspended = false; if (ctx && ctx.state !== "running") ctx.resume().catch(() => { }); }
+  function suspend() { wantSuspended = true; if (ctx && ctx.state === "running") ctx.suspend().catch(() => { }); }
   function setMuted(m) { if (master) master.gain.setTargetAtTime(m ? 0 : 0.8, ctx.currentTime, 0.02); }
   /* env/osc accept an absolute AudioContext start time so melodies never ride main-thread jitter */
   function env(g0, t, a, at, pan) {
@@ -355,6 +358,7 @@ const SFX = (() => {
       const X = Math.floor(ctx.sampleRate * 0.1); // crossfade loop seam
       for (let i = 0; i < X; i++) { const k = i / X; d[N - X + i] = d[N - X + i] * (1 - k) + d[i] * k; }
       const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+      src.loopStart = X / ctx.sampleRate; src.loopEnd = buf.duration; // seamless: resume after the crossfaded region
       const f = ctx.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 160;
       src.connect(f); f.connect(ambGain); src.start();
       scheduleWhale();
@@ -362,7 +366,7 @@ const SFX = (() => {
   }
   function scheduleWhale() {
     setTimeout(() => {
-      if (ctx && unlocked && S.sound) {
+      if (ctx && unlocked && S.sound && ctx.state === "running") {
         try {
           const o = ctx.createOscillator(); o.type = "sine";
           const now = ctx.currentTime;
@@ -386,7 +390,11 @@ const SFX = (() => {
   return {
     unlock, resume, suspend, setMuted,
     duckAmbience(level) {
-      if (ambGain && ctx) ambGain.gain.setTargetAtTime(lerp(0.05, 0.018, level), ctx.currentTime, 0.3);
+      if (!ambGain || !ctx) return;
+      const target = lerp(0.05, 0.018, level);
+      if (Math.abs(target - lastDuck) < 0.002) return;
+      lastDuck = target;
+      ambGain.gain.setTargetAtTime(target, ctx.currentTime, 0.3);
     },
     pop(chain, tier, x) {
       const f = pentFreq(chain) * detune();
@@ -458,8 +466,8 @@ const Ads = (() => {
   const portalParam = (location.search.match(/[?&]portal=(\w+)/) || [])[1];
   function hostPortal() {
     const h = location.hostname;
-    if (/(^|\.)crazygames\.(com|fr|de|es|it|nl|pl|pt|jp|co\.uk)$/.test(h) || /crazygames/.test(document.referrer)) return "crazygames";
-    if (/poki/.test(h) || /poki-gdn\.com$/.test(h) || /poki\.com/.test(document.referrer)) return "poki";
+    if (/(^|\.)crazygames\.(com|fr|de|es|it|nl|pl|pt|jp|co\.uk)$/.test(h) || /crazygames\.com/.test(document.referrer)) return "crazygames";
+    if (/(^|\.)poki\.com$/.test(h) || /(^|\.)poki-gdn\.com$/.test(h) || /poki\.com/.test(document.referrer)) return "poki";
     return null;
   }
   function loadScript(src) {
@@ -497,6 +505,7 @@ const Ads = (() => {
       } else if (kind === "crazygames") {
         await sdk.init(); // v3 hard-requires init before any module call
         inited = true;
+        try { sdk.game.loadingStart(); sdk.game.loadingStop(); } catch (e) { }
         try { adblocked = await sdk.ad.hasAdblock(); } catch (e) { }
         log("crazygames ready, adblock:", adblocked);
       } else if (kind === "h5") {
@@ -504,6 +513,13 @@ const Ads = (() => {
         inited = true;
       } else inited = true;
     } catch (e) { inited = true; log("init error", e); }
+    // backfill: the first run started while the SDK was still initializing
+    try {
+      if (typeof Game !== "undefined" && Game.state === "play" && !document.hidden) {
+        if (kind === "crazygames") sdk.game.gameplayStart();
+        else if (kind === "poki") sdk.gameplayStart();
+      }
+    } catch (e) { }
   }
   function muteForAd(on) { SFX.setMuted(on || !S.sound); Game.adPause(on); }
   const effectiveKind = () => (inited && !adblocked ? kind : (kind === "none" ? "none" : "blocked"));
@@ -514,17 +530,20 @@ const Ads = (() => {
     runStarted() { runs++; runStartAt = Date.now(); },
     gameplayStart() {
       try {
-        if (kind === "poki") sdk.gameplayStart();
+        if (kind === "poki" && inited) sdk.gameplayStart();
         else if (kind === "crazygames" && inited) sdk.game.gameplayStart();
       } catch (e) { }
       log("gameplayStart");
     },
     gameplayStop() {
       try {
-        if (kind === "poki") sdk.gameplayStop();
+        if (kind === "poki" && inited) sdk.gameplayStop();
         else if (kind === "crazygames" && inited) sdk.game.gameplayStop();
       } catch (e) { }
       log("gameplayStop");
+    },
+    syncSound() {
+      try { if (kind === "h5") window.adConfig({ sound: S.sound ? "on" : "off" }); } catch (e) { }
     },
     /* interstitial: run-end transitions only, max 2/session, >=150s apart, never before run 2,
        skipped after rage-restarts (<30s runs) and for no-ads purchasers */
@@ -538,22 +557,24 @@ const Ads = (() => {
         !(IAP.enabled && IAP.owns("noads"));
       log("interstitial?", placement, ok);
       if (!ok) { done(); return; }
-      interstitialCount++; lastInterstitial = now;
+      const consume = () => { interstitialCount++; lastInterstitial = Date.now(); };
       try {
         if (kind === "poki") {
+          consume(); // commercialBreak has no fill signal; count optimistically
           muteForAd(true);
           sdk.commercialBreak().then(() => { muteForAd(false); done(); })
             .catch(() => { muteForAd(false); done(); });
         } else if (kind === "crazygames") {
           muteForAd(true);
           sdk.ad.requestAd("midgame", {
-            adStarted: () => { }, adFinished: () => { muteForAd(false); done(); },
+            adStarted: () => consume(), // budget burns only on actual fill
+            adFinished: () => { muteForAd(false); done(); },
             adError: () => { muteForAd(false); done(); },
           });
         } else if (kind === "h5") {
           window.adBreak({
             type: "next", name: placement,
-            beforeAd: () => muteForAd(true),
+            beforeAd: () => { consume(); muteForAd(true); },
             afterAd: () => muteForAd(false),
             adBreakDone: () => { muteForAd(false); done(); }, // single completion path (fires with or without fill)
           });
@@ -1065,7 +1086,7 @@ const Game = (() => {
 
   let creatures = [];
   let held = null, nextTier = 0, canDrop = false, dropTimer = 0;
-  let aimX = 0, aiming = false, hoverAim = false;
+  let aimX = null, aiming = false, hoverAim = false; // aimX null = never aimed (0 is a valid left-edge tap)
   let score = 0, combo = 0, comboAge = 0, maxCombo = 0, settledT = 0;
   let state = "play"; // play | dying | over | paused(ad)
   let dying = null;
@@ -1083,7 +1104,9 @@ const Game = (() => {
   let chainCv = null, chainMaxTier = -1, chainTheme = -1; // evolution bar cache
   let discovered = store.get("discovered", 3); // bitmask; tiers 0-1 known from start
   let slowFrames = 0, lowQuality = false; // adaptive quality
+  let pausedRendered = false;
   let streakN = 0; // cached daily streak (no per-frame storage reads)
+  let runIsDaily = false; // snapshotted at reset — mid-run toggles must not flip scoring attribution
 
   const themeIdx = () => clamp(S.theme, 0, THEMES.length - 1);
 
@@ -1121,7 +1144,8 @@ const Game = (() => {
     state = "play"; dying = null;
     firstDropDone = false; hintT = 0; firstMergeDone = false;
     chainMaxTier = -1; // rebuild evolution bar
-    if (S.daily) {
+    runIsDaily = S.daily;
+    if (runIsDaily) {
       runSeed = dayKey();
       rng = mulberry32(runSeed);
       // daily streak: consecutive days playing the daily challenge
@@ -1146,7 +1170,7 @@ const Game = (() => {
     const tier = nextTier;
     nextTier = pickSpawnTier();
     const r = TIERS[tier].f * L.cw;
-    held = { tier, r, x: aimX ? clamp(aimX, L.x0 + r + 2, L.x1 - r - 2) : (L.x0 + L.x1) / 2, bob: 0 };
+    held = { tier, r, x: aimX !== null ? clamp(aimX, L.x0 + r + 2, L.x1 - r - 2) : (L.x0 + L.x1) / 2, bob: 0 };
     heldSpawnT = 0; // easeOutBack scale-in
     canDrop = true;
   }
@@ -1156,7 +1180,7 @@ const Game = (() => {
     SFX.unlock(); // first interaction of the session must be audible (iOS-safe: same gesture)
     // spawn at the AIM point, not the lagged follow position — taps land where the finger is
     const r = held.r;
-    const x = clamp(aimX || held.x, L.x0 + r + 2, L.x1 - r - 2);
+    const x = clamp(aimX !== null ? aimX : held.x, L.x0 + r + 2, L.x1 - r - 2);
     const c = newCreature(held.tier, x, L.yTop - 30 - r, true);
     c.vy = 60;
     creatures.push(c);
@@ -1242,7 +1266,8 @@ const Game = (() => {
           const corr = (pen - SLOP) * CORR / (a.im + b.im);
           a.x -= nx * corr * a.im; a.y -= ny * corr * a.im;
           b.x += nx * corr * b.im; b.y += ny * corr * b.im;
-          if (corr > 0.35) { a.asleep = false; a.sleepT = 0; b.asleep = false; b.sleepT = 0; }
+          // shove-off guard: any real correction on a sleeper wakes it (no silent carries into a float)
+          if (corr > 0.35 || pen > SLOP * 2) { a.asleep = false; a.sleepT = 0; b.asleep = false; b.sleepT = 0; }
         }
         // impulse
         const rvx = b.vx - a.vx, rvy = b.vy - a.vy;
@@ -1308,6 +1333,16 @@ const Game = (() => {
 
   const mergeQueue = [];
 
+  /* wake every sleeper in contact range of a removed body — prevents mid-air hover */
+  function wakeAround(d) {
+    for (const c of creatures) {
+      if (c.dead || c === d) continue;
+      const rr = c.r + d.r + 24 * L.scale;
+      const dx = c.x - d.x, dy = c.y - d.y;
+      if (dx * dx + dy * dy < rr * rr) { c.asleep = false; c.sleepT = 0; }
+    }
+  }
+
   function impact(a, b, v, nx, ny) {
     const axis = Math.atan2(ny, nx); // squash along the contact normal
     if (a.impactCd <= 0) { a.impactCd = 0.06; squash(a, v * 0.5, axis + Math.PI / 2); }
@@ -1343,6 +1378,7 @@ const Game = (() => {
       if (a.dead || b.dead) { a.merging = b.merging = false; continue; }
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
       a.dead = b.dead = true;
+      wakeAround(a); wakeAround(b); // neighbors must never keep sleeping on a hole
       // absorb ghosts: parents visibly pull into the midpoint for ~60ms
       ghosts.push({ tier: a.tier, ax: a.x, ay: a.y, bx: b.x, by: b.y, mx, my, t: 0, aAngle: a.angle, bAngle: b.angle });
       combo++;
@@ -1385,7 +1421,8 @@ const Game = (() => {
         }
       }
       if (combo >= 3) {
-        Fx.float(mx, my - 30 * L.scale, T.combo + " ×" + combo, 15 + Math.min(combo, 8), "#ffd678");
+        // fan consecutive combo texts out so mega-cascades never stack unreadably
+        Fx.float(mx + rand(-30, 30), my - (30 + (combo - 3) * 18) * L.scale, T.combo + " ×" + combo, 15 + Math.min(combo, 8), "#ffd678");
       }
     }
     // purge dead
@@ -1413,8 +1450,11 @@ const Game = (() => {
 
   function checkUnlocks(before) {
     const now = Math.max(score, S.best);
+    let mask = store.get("themesUnlocked", 1);
     for (let i = 1; i < THEMES.length; i++) {
-      if (before < THEMES[i].need && now >= THEMES[i].need) {
+      if (now >= THEMES[i].need && !(mask & (1 << i))) {
+        mask |= 1 << i;
+        store.set("themesUnlocked", mask);
         Fx.float(VW / 2, VH * 0.38, (FR ? "Ambiance débloquée : " : "Theme unlocked: ") + T.themes[i] + " !", 17, "#ffd678");
         SFX.newBest();
         vibe([20, 30, 40]);
@@ -1462,7 +1502,7 @@ const Game = (() => {
 
   function showOverPanel() {
     state = "over";
-    const isDaily = S.daily;
+    const isDaily = runIsDaily;
     let isNew = false;
     if (isDaily) {
       if (S.dailyBest.day !== dayKey()) S.dailyBest = { day: dayKey(), score: 0 };
@@ -1483,12 +1523,14 @@ const Game = (() => {
     let d = 0;
     for (const c of [...creatures]) {
       if (c.y < cutoff) {
+        const j = d; // capture: rising pentatonic run, not N copies of the last pitch
         setTimeout(() => {
           c.dead = true;
           const idx = creatures.indexOf(c);
           if (idx >= 0) creatures.splice(idx, 1);
+          wakeAround(c);
           Fx.burst(c.x, c.y, TIERS[c.tier].glow, 8, 140 * L.scale, 30);
-          SFX.popSmall(d);
+          SFX.popSmall(j);
         }, d * 40);
         d++;
       }
@@ -1504,10 +1546,10 @@ const Game = (() => {
     usedDouble = true; doubled = true;
     score *= 2;
     let isNew = false;
-    if (S.daily) {
+    if (runIsDaily) {
       if (score > S.dailyBest.score) { S.dailyBest.score = score; store.set("dailyBest", S.dailyBest); isNew = true; }
     } else if (score > S.best) { S.best = score; store.set("best", S.best); isNew = true; }
-    UI.refreshOverScore(score, S.daily ? S.dailyBest.score : S.best, isNew);
+    UI.refreshOverScore(score, runIsDaily ? S.dailyBest.score : S.best, isNew);
     if (isNew) SFX.newBest(); else SFX.ui();
   }
 
@@ -1527,13 +1569,17 @@ const Game = (() => {
       lowQuality = true; LOWQ = true;
       layout();
     }
-    if (adPaused) { render(t, 0); return; }
+    if (adPaused) {
+      if (!pausedRendered) { render(t, 0); pausedRendered = true; } // one frame, then let the GPU sleep behind the blur
+      return;
+    }
+    pausedRendered = false;
     NOW += dt * 1000; // game clock: frozen during ad/menu pause so immunity timers stay fair
     if (hitstopT > 0) { hitstopT -= dt; Fx.update(dt); render(t, acc / SUB); return; }
 
     // input-follow for held
     if (held) {
-      const target = clamp(aimX || held.x, L.x0 + held.r + 2, L.x1 - held.r - 2);
+      const target = clamp(aimX !== null ? aimX : held.x, L.x0 + held.r + 2, L.x1 - held.r - 2);
       held.x = lerp(held.x, target, 1 - Math.pow(0.000000001, dt));
       held.bob += dt;
     }
@@ -1570,10 +1616,15 @@ const Game = (() => {
       if (ghosts[i].t > 0.06) ghosts.splice(i, 1);
     }
     if (scoreFlash > 0) scoreFlash = Math.max(0, scoreFlash - dt / 0.15);
-    // springs & faces
+    // springs & faces (spring integrated in <=16ms slices: stable even at the 50ms dt clamp)
     for (const c of creatures) {
-      c.sqv += (-900 * c.sq - 36 * c.sqv) * dt;
-      c.sq += c.sqv * dt;
+      let sdt = dt;
+      while (sdt > 0.0001) {
+        const h2 = Math.min(sdt, 1 / 60);
+        c.sqv += (-900 * c.sq - 36 * c.sqv) * h2;
+        c.sq += c.sqv * h2;
+        sdt -= h2;
+      }
       c.sq = clamp(c.sq, -0.42, 0.42);
       if (c.pop < 1) c.pop = Math.min(1, c.pop + dt / 0.2);
       if (c.joyT > 0) c.joyT -= dt;
@@ -1603,11 +1654,12 @@ const Game = (() => {
     ctx.save();
     ctx.globalCompositeOperation = "lighter";
     for (const c of creatures) {
+      if (LOWQ && c.r < 11) continue; // low-quality mode: skip tiny halos, keep the big glow
       const ix = lerp(c.px, c.x, alpha), iy = lerp(c.py, c.y, alpha);
       const spr = Sprites.get(c.tier, c.r);
       const d = spr.r + spr.pad;
       const breathe = 0.82 + 0.18 * Math.sin(t * 0.0021 + c.birth % 1000);
-      ctx.globalAlpha = breathe;
+      ctx.globalAlpha = LOWQ ? breathe * 0.7 : breathe;
       ctx.drawImage(spr.hv, ix - d, iy - d, d * 2, d * 2);
     }
     ctx.restore();
@@ -1725,16 +1777,26 @@ const Game = (() => {
       g.moveTo(x - 5, L.yTop); g.lineTo(x + 5, L.yTop); g.lineTo(x, L.yTop + (x < VW / 2 ? 0 : 0) + 7);
       g.closePath(); g.fill();
     }
-    // red vignette when hot
+    // red vignette when hot (pre-rendered once per layout; alpha animated)
     if (w > 0.4) {
-      const vg = g.createRadialGradient(VW / 2, VH / 2, VH * 0.35, VW / 2, VH / 2, VH * 0.75);
-      vg.addColorStop(0, "rgba(255,60,80,0)");
-      vg.addColorStop(1, `rgba(255,40,60,${(w - 0.4) * 0.35 * pulse})`);
-      g.fillStyle = vg;
-      g.fillRect(0, 0, VW, VH);
+      if (!vigCv || vigCv._w !== VW || vigCv._h !== VH) {
+        vigCv = document.createElement("canvas");
+        vigCv.width = Math.ceil(VW / 2); vigCv.height = Math.ceil(VH / 2); // half-res is invisible for a soft vignette
+        const vgc = vigCv.getContext("2d");
+        const vg = vgc.createRadialGradient(VW / 4, VH / 4, VH * 0.175, VW / 4, VH / 4, VH * 0.375);
+        vg.addColorStop(0, "rgba(255,60,80,0)");
+        vg.addColorStop(1, "rgba(255,40,60,1)");
+        vgc.fillStyle = vg;
+        vgc.fillRect(0, 0, vigCv.width, vigCv.height);
+        vigCv._w = VW; vigCv._h = VH;
+      }
+      g.globalAlpha = (w - 0.4) * 0.35 * pulse;
+      g.drawImage(vigCv, 0, 0, VW, VH);
+      g.globalAlpha = 1;
     }
     g.restore();
   }
+  let vigCv = null;
 
   function drawCreature(g, c, x, y, t) {
     const spr = Sprites.get(c.tier, c.r);
@@ -1746,7 +1808,7 @@ const Game = (() => {
     }
     const breathe = 1 + 0.013 * Math.sin(t * 0.0021 + c.birth % 1000);
     // falling: stretch along velocity for the classic stretch->impact->squash arc
-    const fallStretch = (!c.asleep && c.vy > 300 * L.scale) ? clamp(c.vy / (3500 * L.scale), 0, 0.06) : 0;
+    const fallStretch = (!c.asleep && c.vy > 300 * L.scale) ? clamp(c.vy / (3500 * L.scale), 0, 0.09) : 0;
     const sx = (1 - c.sq * 0.9) * sc * breathe * (1 - fallStretch * 0.6);
     const sy = (1 + c.sq) * sc * (2 - breathe) * (1 + fallStretch);
     g.save();
@@ -1789,13 +1851,13 @@ const Game = (() => {
         g.beginPath(); g.arc(sx * ex + look - er * 0.18, ey - er * 0.15, er * 0.16, 0, TAU); g.fill();
       }
     }
-    // brows when worried
+    // brows when worried (mirrored: inner ends raised = canonical worry)
     if (worried && !joy) {
       g.strokeStyle = "#123"; g.lineWidth = Math.max(1.2, r * 0.055);
       for (const sx of [-1, 1]) {
         g.beginPath();
-        g.moveTo(sx * ex - er * 0.7, ey - er * 1.35 + (sx < 0 ? 0 : er * 0.3) * 0);
-        g.lineTo(sx * ex + er * 0.7, ey - er * 1.05);
+        g.moveTo(sx * (ex - er * 0.7), ey - er * 1.35);
+        g.lineTo(sx * (ex + er * 0.7), ey - er * 1.05);
         g.stroke();
       }
     }
@@ -1882,13 +1944,12 @@ const Game = (() => {
     for (let i = 0; i < 11; i++) {
       const rr = rBase + i * rStep;
       cx += rr;
-      const ti = TIERS[i];
       const reached = i <= maxTierRun;
       g.globalAlpha = reached ? 1 : 0.28;
-      const cg = g.createRadialGradient(cx - rr * 0.3, cy - rr * 0.3, 0.5, cx, cy, rr * 1.2);
-      cg.addColorStop(0, ti.hi); cg.addColorStop(1, ti.lo);
-      g.fillStyle = cg;
-      g.beginPath(); g.arc(cx, cy, rr, 0, TAU); g.fill();
+      // real creature sprites: the chain reads as a collection, Suika-style
+      const spr = Sprites.get(i, rr);
+      const d = spr.r + spr.pad;
+      g.drawImage(spr.cv, cx - d, cy - d, d * 2, d * 2);
       cx += rr + 7;
     }
     g.globalAlpha = 1;
@@ -1918,12 +1979,12 @@ const Game = (() => {
     g.textAlign = "center";
     g.font = `700 12px ui-rounded, "Segoe UI", system-ui, sans-serif`;
     g.fillStyle = "#7fa8c9";
-    const bestBase = S.daily ? (S.dailyBest.day === dayKey() ? S.dailyBest.score : 0) : S.best;
+    const bestBase = runIsDaily ? (S.dailyBest.day === dayKey() ? S.dailyBest.score : 0) : S.best;
     const bestVal = Math.max(bestBase, score);
     g.fillStyle = score > 0 && score >= bestBase && bestBase > 0 ? "#ffd678" : "#7fa8c9";
     g.fillText("★ " + bestVal, VW / 2, safeTop + 40);
     // daily badge + streak
-    if (S.daily) {
+    if (runIsDaily) {
       g.font = `800 10px ui-rounded, "Segoe UI", system-ui, sans-serif`;
       g.fillStyle = "#ffd678";
       g.fillText(T.daybadge + (streakN > 1 ? "  🔥" + streakN : ""), VW / 2, safeTop + 56);
@@ -2037,12 +2098,15 @@ const UI = (() => {
     // themes
     const row = $("themeRow");
     row.innerHTML = "";
+    // unlocks are a persisted bitmask stamped at toast time (daily-mode runs unlock too)
+    let unlockMask = store.get("themesUnlocked", 1);
+    THEMES.forEach((th, i) => { if (S.best >= th.need) unlockMask |= 1 << i; }); // legacy migration
     THEMES.forEach((th, i) => {
       const d = document.createElement("div");
       d.className = "theme-dot";
       d.style.background = `linear-gradient(160deg, ${th.bgTop}, ${th.bgBot})`;
       d.style.boxShadow = `inset 0 0 0 2px ${hexA(th.wall, 0.5)}`;
-      const locked = S.best < th.need;
+      const locked = !(unlockMask & (1 << i));
       if (locked) d.classList.add("lock");
       if (i === S.theme) d.classList.add("sel");
       const label = document.createElement("span");
@@ -2072,6 +2136,9 @@ const UI = (() => {
     countUpRaf = requestAnimationFrame(stepFn);
   }
   function showGameOver(score, best, isNew, usedCont, usedDbl) {
+    // labels re-resolved here: SDK init is async, so boot-time txt() saw kind="none"
+    $("btnContinue").textContent = Ads.adLabel(T.cont, T.contAd);
+    $("btnDouble").textContent = Ads.adLabel(T.dbl, T.dblAd);
     countUp($("ovScore"), score);
     $("ovBest").innerHTML = `${T.best} <b>${best}</b>`;
     $("nbBadge").style.display = isNew && score > 0 ? "" : "none";
@@ -2103,7 +2170,7 @@ const UI = (() => {
     txt(); syncSwitches();
     btnMute.addEventListener("click", () => {
       S.sound = !S.sound; store.set("sound", S.sound);
-      SFX.setMuted(!S.sound); syncSwitches(); SFX.ui(); vibe(8);
+      SFX.setMuted(!S.sound); Ads.syncSound(); syncSwitches(); SFX.ui(); vibe(8);
     });
     btnMenu.addEventListener("click", () => {
       SFX.ui(); vibe(8);
@@ -2123,7 +2190,7 @@ const UI = (() => {
     });
     $("swSound").addEventListener("click", () => {
       S.sound = !S.sound; store.set("sound", S.sound);
-      SFX.setMuted(!S.sound); syncSwitches(); SFX.ui();
+      SFX.setMuted(!S.sound); Ads.syncSound(); syncSwitches(); SFX.ui();
     });
     $("swHaptics").addEventListener("click", () => {
       S.haptics = !S.haptics; store.set("haptics", S.haptics);
