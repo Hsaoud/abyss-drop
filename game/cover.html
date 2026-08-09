@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Abyss Drop — cover generator</title>
+<style>body{margin:0;background:#111}canvas{display:block;margin:0 auto;max-width:100%}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+"use strict";
+/* Marketing cover generator — reuses the game's palette and creature art.
+   Usage: cover.html?fmt=landscape|portrait|square[&save=1]  */
+const TAU = Math.PI * 2;
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
+const rand = (a, b) => a + Math.random() * (b - a);
+const TIERS = [
+  { hi: "#b8ffe9", lo: "#1f8a6e", glow: "#49ffd1" },
+  { hi: "#ffc2ec", lo: "#a03e75", glow: "#ff7ad1" },
+  { hi: "#ffd2a8", lo: "#b05a28", glow: "#ff9d55" },
+  { hi: "#e2c8ff", lo: "#6f3fb5", glow: "#b47aff" },
+  { hi: "#baf1ff", lo: "#1f7aa0", glow: "#5fdcff" },
+  { hi: "#fff3b0", lo: "#b08a1a", glow: "#ffe14d" },
+  { hi: "#5a6db8", lo: "#141c4a", glow: "#8fefff" },
+  { hi: "#ffb3d6", lo: "#a02360", glow: "#ff4fa3" },
+  { hi: "#c8ffd2", lo: "#2a8a48", glow: "#6bff8f" },
+  { hi: "#c3d2ff", lo: "#3648b5", glow: "#7f9bff" },
+  { hi: "#7fb8e8", lo: "#0d3a66", glow: "#45d8ff" },
+];
+function hexA(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+function mix(h1, h2, t) {
+  const a = parseInt(h1.slice(1), 16), b = parseInt(h2.slice(1), 16);
+  const r = Math.round(lerp((a >> 16) & 255, (b >> 16) & 255, t));
+  const g = Math.round(lerp((a >> 8) & 255, (b >> 8) & 255, t));
+  const bl = Math.round(lerp(a & 255, b & 255, t));
+  return `rgb(${r},${g},${bl})`;
+}
+
+function drawCreature(g, tier, cx, cy, r, opts) {
+  const o = opts || {};
+  const t = TIERS[tier];
+  // halo
+  const glow = g.createRadialGradient(cx, cy, r * 0.45, cx, cy, r * 1.9);
+  glow.addColorStop(0, hexA(t.glow, 0.36));
+  glow.addColorStop(0.55, hexA(t.glow, 0.13));
+  glow.addColorStop(1, hexA(t.glow, 0));
+  g.save();
+  g.globalCompositeOperation = "lighter";
+  g.fillStyle = glow;
+  g.beginPath(); g.arc(cx, cy, r * 1.9, 0, TAU); g.fill();
+  g.restore();
+  g.save();
+  g.translate(cx, cy);
+  g.rotate(o.rot || 0);
+  g.translate(-cx, -cy);
+  // body
+  const bg = g.createRadialGradient(cx - r * 0.35, cy - r * 0.4, r * 0.1, cx, cy, r * 1.05);
+  bg.addColorStop(0, t.hi);
+  bg.addColorStop(0.72, mix(t.hi, t.lo, 0.55));
+  bg.addColorStop(1, t.lo);
+  g.fillStyle = bg;
+  g.beginPath(); g.arc(cx, cy, r, 0, TAU); g.fill();
+  g.strokeStyle = hexA("#ffffff", 0.35);
+  g.lineWidth = Math.max(1, r * 0.05);
+  g.beginPath(); g.arc(cx, cy, r * 0.92, -TAU * 0.42, -TAU * 0.08); g.stroke();
+  const core = g.createRadialGradient(cx, cy + r * 0.1, 0, cx, cy, r * 0.75);
+  core.addColorStop(0, hexA(t.glow, 0.5));
+  core.addColorStop(1, hexA(t.glow, 0));
+  g.fillStyle = core;
+  g.beginPath(); g.arc(cx, cy, r * 0.75, 0, TAU); g.fill();
+  accessory(g, tier, cx, cy, r, t);
+  face(g, cx, cy, r, o.joy, o.lookX || 0);
+  g.restore();
+}
+
+function accessory(g, tier, cx, cy, r, t) {
+  g.save();
+  g.strokeStyle = mix(t.glow, "#ffffff", 0.45);
+  g.globalAlpha = 0.85;
+  g.fillStyle = mix(t.glow, "#ffffff", 0.35);
+  g.lineWidth = Math.max(1.5, r * 0.09); g.lineCap = "round";
+  switch (tier) {
+    case 0:
+      for (let i = 0; i < 6; i++) {
+        const a = i / 6 * TAU + 0.4;
+        g.beginPath();
+        g.moveTo(cx + Math.cos(a) * r * 1.02, cy + Math.sin(a) * r * 1.02);
+        g.lineTo(cx + Math.cos(a) * r * 1.3, cy + Math.sin(a) * r * 1.3);
+        g.stroke();
+      }
+      break;
+    case 1: // krill: antennae + tail segments
+      g.beginPath(); g.moveTo(cx - r * 0.3, cy - r * 0.85); g.quadraticCurveTo(cx - r * 0.7, cy - r * 1.5, cx - r * 1.1, cy - r * 1.35); g.stroke();
+      g.beginPath(); g.moveTo(cx + r * 0.3, cy - r * 0.85); g.quadraticCurveTo(cx + r * 0.7, cy - r * 1.5, cx + r * 1.1, cy - r * 1.35); g.stroke();
+      for (let i = 0; i < 3; i++) {
+        const y = cy + r * 0.35 + i * r * 0.55 * 0.5;
+        g.beginPath(); g.arc(cx, y - r * 0.55 * 0.5, r * 0.55 * 0.8, TAU * 0.08, TAU * 0.42); g.stroke();
+      }
+      break;
+    case 2:
+      for (let i = 0; i < 3; i++) {
+        g.beginPath();
+        g.arc(cx - r * 0.1, cy + r * 0.15, r * (0.55 + i * 0.16), -TAU * 0.38, -TAU * 0.06);
+        g.stroke();
+      }
+      g.beginPath();
+      g.moveTo(cx - r * 0.85, cy + r * 0.4); g.lineTo(cx - r * 1.3, cy + r * 0.15);
+      g.moveTo(cx - r * 0.85, cy + r * 0.4); g.lineTo(cx - r * 1.32, cy + r * 0.5);
+      g.moveTo(cx - r * 0.85, cy + r * 0.4); g.lineTo(cx - r * 1.25, cy + r * 0.85);
+      g.stroke();
+      g.beginPath(); g.moveTo(cx + r * 0.55, cy - r * 0.65); g.quadraticCurveTo(cx + r * 1.25, cy - r * 1.15, cx + r * 1.55, cy - r * 0.65); g.stroke();
+      break;
+    case 4: // seahorse: dorsal fin ridge + snout
+      g.beginPath();
+      for (let i = 0; i < 4; i++) {
+        const y = cy - r * 0.5 + i * r * 0.32;
+        g.moveTo(cx + r * 0.85, y);
+        g.lineTo(cx + r * 1.25, y + r * 0.16);
+        g.lineTo(cx + r * 0.85, y + r * 0.32);
+      }
+      g.stroke();
+      g.fillStyle = mix(t.hi, t.lo, 0.3);
+      g.beginPath(); g.ellipse(cx - r * 1.05, cy - r * 0.15, r * 0.35, r * 0.16, -0.3, 0, TAU); g.fill();
+      break;
+    case 8: { // turtle: hex shell + flippers
+      g.strokeStyle = hexA(t.lo, 0.9);
+      const hex = (hx, hy, hr) => {
+        g.beginPath();
+        for (let k = 0; k < 6; k++) {
+          const a = k / 6 * TAU + TAU / 12;
+          const px = hx + Math.cos(a) * hr, py = hy + Math.sin(a) * hr;
+          k ? g.lineTo(px, py) : g.moveTo(px, py);
+        }
+        g.closePath(); g.stroke();
+      };
+      for (let i = 0; i < 3; i++) {
+        for (let j = 0; j < 3 - (i % 2); j++) {
+          hex(cx - r * 0.42 + j * r * 0.42 + (i % 2) * r * 0.21, cy - r * 0.36 + i * r * 0.36, r * 0.2);
+        }
+      }
+      g.fillStyle = hexA(t.hi, 0.85);
+      g.beginPath(); g.ellipse(cx - r * 1.02, cy + r * 0.35, r * 0.32, r * 0.15, 0.5, 0, TAU); g.fill();
+      g.beginPath(); g.ellipse(cx + r * 1.02, cy + r * 0.35, r * 0.32, r * 0.15, -0.5, 0, TAU); g.fill();
+      break;
+    }
+    case 9: // manta: wings + tail
+      g.fillStyle = hexA(t.hi, 0.75);
+      g.beginPath();
+      g.moveTo(cx - r * 0.6, cy - r * 0.2);
+      g.quadraticCurveTo(cx - r * 1.7, cy - r * 0.55, cx - r * 1.45, cy + r * 0.35);
+      g.quadraticCurveTo(cx - r * 0.9, cy + r * 0.25, cx - r * 0.55, cy + r * 0.3);
+      g.closePath(); g.fill();
+      g.beginPath();
+      g.moveTo(cx + r * 0.6, cy - r * 0.2);
+      g.quadraticCurveTo(cx + r * 1.7, cy - r * 0.55, cx + r * 1.45, cy + r * 0.35);
+      g.quadraticCurveTo(cx + r * 0.9, cy + r * 0.25, cx + r * 0.55, cy + r * 0.3);
+      g.closePath(); g.fill();
+      g.beginPath(); g.moveTo(cx, cy + r * 0.95); g.quadraticCurveTo(cx + r * 0.2, cy + r * 1.5, cx, cy + r * 1.8); g.stroke();
+      break;
+    case 3:
+      g.beginPath();
+      for (let i = 0; i <= 4; i++) {
+        const x = cx - r * 0.8 + i * r * 0.4;
+        g.arc(x, cy + r * 0.78, r * 0.2, 0, Math.PI, false);
+      }
+      g.stroke();
+      for (let i = 0; i < 3; i++) {
+        const x = cx - r * 0.5 + i * r * 0.5;
+        g.beginPath(); g.moveTo(x, cy + r * 0.95);
+        g.quadraticCurveTo(x + r * 0.18, cy + r * 1.35, x - r * 0.1, cy + r * 1.7);
+        g.stroke();
+      }
+      break;
+    case 5:
+      g.fillStyle = hexA(t.hi, 0.9);
+      for (let i = 0; i < 12; i++) {
+        const a = i / 12 * TAU + 0.26;
+        const x2 = cx + Math.cos(a) * r * 1.28, y2 = cy + Math.sin(a) * r * 1.28;
+        const p = a + TAU / 48, q = a - TAU / 48;
+        g.beginPath();
+        g.moveTo(cx + Math.cos(q) * r * 0.9, cy + Math.sin(q) * r * 0.9);
+        g.lineTo(x2, y2);
+        g.lineTo(cx + Math.cos(p) * r * 0.9, cy + Math.sin(p) * r * 0.9);
+        g.closePath(); g.fill();
+      }
+      break;
+    case 6: {
+      g.beginPath(); g.moveTo(cx, cy - r * 0.9);
+      g.quadraticCurveTo(cx + r * 0.5, cy - r * 1.6, cx + r * 0.95, cy - r * 1.3);
+      g.stroke();
+      const lure = g.createRadialGradient(cx + r * 0.95, cy - r * 1.3, 0, cx + r * 0.95, cy - r * 1.3, r * 0.45);
+      lure.addColorStop(0, "#dfffff"); lure.addColorStop(0.4, hexA("#9fffff", 0.7)); lure.addColorStop(1, hexA("#9fffff", 0));
+      g.globalAlpha = 1;
+      g.fillStyle = lure;
+      g.beginPath(); g.arc(cx + r * 0.95, cy - r * 1.3, r * 0.45, 0, TAU); g.fill();
+      g.fillStyle = "#eaffff";
+      g.beginPath(); g.arc(cx + r * 0.95, cy - r * 1.3, r * 0.14, 0, TAU); g.fill();
+      break;
+    }
+    case 7:
+      g.beginPath();
+      for (let i = 0; i < 5; i++) {
+        const x = cx - r * 0.8 + i * r * 0.4;
+        g.arc(x, cy + r * 0.82, r * 0.22, 0, Math.PI, false);
+      }
+      g.stroke();
+      g.fillStyle = hexA("#ffffff", 0.5);
+      for (let i = 0; i < 4; i++) {
+        g.beginPath(); g.arc(cx - r * 0.6 + i * r * 0.4, cy + r * 0.55, r * 0.06, 0, TAU); g.fill();
+      }
+      break;
+    case 10:
+      // belly grooves: short arcs hugging the lower belly, well clear of the face
+      g.strokeStyle = hexA("#ffffff", 0.22);
+      g.lineWidth = Math.max(1.5, r * 0.045);
+      for (let i = 0; i < 3; i++) {
+        const rr = r * (0.58 + i * 0.13);
+        g.beginPath(); g.arc(cx, cy + r * 0.12, rr, TAU * 0.14, TAU * 0.36); g.stroke();
+      }
+      // blowhole spout
+      g.strokeStyle = hexA("#ffffff", 0.4);
+      g.beginPath();
+      g.moveTo(cx - r * 0.12, cy - r * 0.94);
+      g.quadraticCurveTo(cx - r * 0.28, cy - r * 1.4, cx - r * 0.05, cy - r * 1.55);
+      g.moveTo(cx - r * 0.12, cy - r * 0.94);
+      g.quadraticCurveTo(cx + r * 0.14, cy - r * 1.36, cx + r * 0.3, cy - r * 1.48);
+      g.stroke();
+      g.fillStyle = hexA(t.hi, 0.85);
+      g.beginPath();
+      g.moveTo(cx + r * 0.95, cy + r * 0.1);
+      g.quadraticCurveTo(cx + r * 1.55, cy - r * 0.15, cx + r * 1.5, cy - r * 0.55);
+      g.quadraticCurveTo(cx + r * 1.25, cy - r * 0.28, cx + r * 1.12, cy - r * 0.3);
+      g.quadraticCurveTo(cx + r * 1.05, cy - r * 0.05, cx + r * 0.95, cy + r * 0.1);
+      g.closePath(); g.fill();
+      break;
+  }
+  g.restore();
+}
+
+function face(g, cx, cy, r, joy, lookX) {
+  const ex = r * 0.34, ey = -r * 0.14, er = r * 0.15;
+  g.fillStyle = "#ffffff";
+  for (const sx of [-1, 1]) {
+    if (joy) {
+      g.strokeStyle = "#123"; g.lineWidth = Math.max(1.2, r * 0.06); g.lineCap = "round";
+      g.beginPath(); g.arc(cx + sx * ex, cy + ey, er * 0.85, Math.PI * 1.15, Math.PI * 1.85); g.stroke();
+    } else {
+      g.fillStyle = "#ffffff";
+      g.beginPath(); g.arc(cx + sx * ex, cy + ey, er, 0, TAU); g.fill();
+      g.fillStyle = "#0b1626";
+      g.beginPath(); g.arc(cx + sx * ex + lookX * er * 0.3, cy + ey + er * 0.1, er * 0.52, 0, TAU); g.fill();
+      g.fillStyle = "#ffffff";
+      g.beginPath(); g.arc(cx + sx * ex + lookX * er * 0.3 - er * 0.18, cy + ey - er * 0.15, er * 0.16, 0, TAU); g.fill();
+    }
+  }
+  g.strokeStyle = "#123"; g.lineWidth = Math.max(1.2, r * 0.06); g.lineCap = "round";
+  if (joy) {
+    g.fillStyle = "#1c2a3a";
+    g.beginPath(); g.arc(cx, cy + r * 0.3, r * 0.16, 0, Math.PI); g.closePath(); g.fill();
+  } else {
+    g.beginPath(); g.arc(cx, cy + r * 0.22, r * 0.16, TAU * 0.06, TAU * 0.44); g.stroke();
+  }
+}
+
+function background(g, W, H) {
+  const grad = g.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, "#0c2846");
+  grad.addColorStop(0.55, "#071830");
+  grad.addColorStop(1, "#030711");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, W, H);
+  // god rays
+  g.save();
+  g.globalCompositeOperation = "lighter";
+  for (let i = 0; i < 4; i++) {
+    const x = W * (0.1 + i * 0.26);
+    const w = W * 0.18;
+    const rg = g.createLinearGradient(x - w, 0, x + w, 0);
+    rg.addColorStop(0, "rgba(80,180,255,0)");
+    rg.addColorStop(0.5, "rgba(80,180,255,0.07)");
+    rg.addColorStop(1, "rgba(80,180,255,0)");
+    g.fillStyle = rg;
+    g.save();
+    g.transform(1, 0, 0.22, 1, 0, 0);
+    g.fillRect(x - w, 0, w * 2, H);
+    g.restore();
+  }
+  g.restore();
+  // dust + bubbles
+  for (let i = 0; i < 90; i++) {
+    g.globalAlpha = rand(0.04, 0.16);
+    g.fillStyle = "rgba(140,200,255,1)";
+    g.beginPath(); g.arc(rand(0, W), rand(0, H), rand(1, 3), 0, TAU); g.fill();
+  }
+  for (let i = 0; i < 26; i++) {
+    g.globalAlpha = rand(0.08, 0.2);
+    g.strokeStyle = "#9fd8ff";
+    g.lineWidth = 2;
+    g.beginPath(); g.arc(rand(0, W), rand(0, H), rand(4, 14), 0, TAU); g.stroke();
+  }
+  g.globalAlpha = 1;
+}
+
+function title(g, cx, cy, size, sub) {
+  g.save();
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  const f = `900 ${size}px ui-rounded, "SF Pro Rounded", "Segoe UI", "Arial Rounded MT Bold", system-ui, sans-serif`;
+  g.font = f;
+  // glow pass
+  g.shadowColor = "rgba(90,200,255,0.9)";
+  g.shadowBlur = size * 0.45;
+  const tg = g.createLinearGradient(0, cy - size, 0, cy + size);
+  tg.addColorStop(0, "#eafaff");
+  tg.addColorStop(0.55, "#9fe2ff");
+  tg.addColorStop(1, "#4fa8e8");
+  g.fillStyle = tg;
+  g.fillText("ABYSS", cx, cy - size * 0.52);
+  g.fillText("DROP", cx, cy + size * 0.52);
+  g.shadowBlur = 0;
+  g.lineWidth = Math.max(2, size * 0.03);
+  g.strokeStyle = "rgba(255,255,255,0.25)";
+  g.strokeText("ABYSS", cx, cy - size * 0.52);
+  g.strokeText("DROP", cx, cy + size * 0.52);
+  if (sub) {
+    g.font = `700 ${size * 0.17}px ui-rounded, "Segoe UI", system-ui, sans-serif`;
+    g.fillStyle = "rgba(159,216,255,0.85)";
+    g.fillText(sub, cx, cy + size * 1.18);
+  }
+  g.restore();
+}
+
+function vignette(g, W, H) {
+  const vg = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.42, W / 2, H / 2, Math.max(W, H) * 0.72);
+  vg.addColorStop(0, "rgba(0,0,0,0)");
+  vg.addColorStop(1, "rgba(0,0,10,0.42)");
+  g.fillStyle = vg;
+  g.fillRect(0, 0, W, H);
+}
+
+/* per-format compositions */
+const fmt = (location.search.match(/[?&]fmt=(\w+)/) || [, "landscape"])[1];
+const sizes = { landscape: [1920, 1080], portrait: [800, 1200], square: [800, 800] };
+const [W, H] = sizes[fmt] || sizes.landscape;
+const canvas = document.getElementById("c");
+canvas.width = W; canvas.height = H;
+const g = canvas.getContext("2d");
+
+background(g, W, H);
+
+if (fmt === "landscape") {
+  // the whale: the aspirational final tier, looming in the deep
+  g.globalAlpha = 0.72;
+  drawCreature(g, 10, W * 0.82, H * 0.30, 190, { lookX: -0.5 });
+  g.globalAlpha = 1;
+  // creature pile right
+  drawCreature(g, 9, W * 0.60, H * 0.94, 150, { rot: -0.06 });
+  drawCreature(g, 7, W * 0.78, H * 0.88, 135, { joy: true, rot: 0.05 });
+  drawCreature(g, 5, W * 0.945, H * 0.86, 110, { lookX: -0.6, rot: -0.1 });
+  drawCreature(g, 8, W * 0.545, H * 0.72, 105, { rot: 0.08, lookX: 0.4 });
+  drawCreature(g, 3, W * 0.69, H * 0.62, 120, { joy: true });
+  drawCreature(g, 2, W * 0.86, H * 0.60, 82, { rot: 0.15, lookX: -0.4 });
+  drawCreature(g, 0, W * 0.585, H * 0.44, 48, { lookX: 0.5 });
+  drawCreature(g, 4, W * 0.95, H * 0.38, 64, { lookX: -0.7 });
+  // falling one near title
+  drawCreature(g, 1, W * 0.115, H * 0.16, 52, { rot: 0.3, lookX: 0.3 });
+  title(g, W * 0.27, H * 0.47, 210, "MERGE THE DEEP");
+} else if (fmt === "portrait") {
+  // whale kept high-right and clear of the wordmark
+  g.globalAlpha = 0.62;
+  drawCreature(g, 10, W * 0.90, H * 0.10, 96, { lookX: -0.6 });
+  g.globalAlpha = 1;
+  drawCreature(g, 1, W * 0.12, H * 0.115, 38, { rot: 0.28, lookX: 0.4 });
+  title(g, W * 0.5, H * 0.30, 124, "MERGE THE DEEP");
+  // mid-field drifters fill the gap between title and pile
+  drawCreature(g, 0, W * 0.20, H * 0.475, 30, { lookX: 0.6 });
+  drawCreature(g, 4, W * 0.80, H * 0.50, 54, { lookX: -0.6, rot: 0.1 });
+  drawCreature(g, 2, W * 0.44, H * 0.565, 44, { rot: 0.16 });
+  // the pile
+  drawCreature(g, 9, W * 0.31, H * 0.925, 104, { rot: -0.05 });
+  drawCreature(g, 7, W * 0.73, H * 0.90, 96, { joy: true });
+  drawCreature(g, 5, W * 0.10, H * 0.775, 70, { lookX: 0.5, rot: -0.12 });
+  drawCreature(g, 3, W * 0.52, H * 0.725, 92, { joy: true });
+  drawCreature(g, 8, W * 0.90, H * 0.725, 66, { lookX: -0.5 });
+  drawCreature(g, 6, W * 0.245, H * 0.665, 52, { lookX: 0.3 });
+} else {
+  g.globalAlpha = 0.62;
+  drawCreature(g, 10, W * 0.90, H * 0.095, 80, { lookX: -0.6 });
+  g.globalAlpha = 1;
+  drawCreature(g, 1, W * 0.10, H * 0.11, 30, { rot: 0.28, lookX: 0.4 });
+  title(g, W * 0.5, H * 0.30, 106, "MERGE THE DEEP");
+  drawCreature(g, 0, W * 0.16, H * 0.50, 26, { lookX: 0.6 });
+  drawCreature(g, 4, W * 0.845, H * 0.525, 46, { lookX: -0.6, rot: 0.1 });
+  drawCreature(g, 9, W * 0.29, H * 0.945, 92, { rot: -0.05 });
+  drawCreature(g, 7, W * 0.73, H * 0.92, 86, { joy: true });
+  drawCreature(g, 3, W * 0.50, H * 0.755, 82, { joy: true });
+  drawCreature(g, 5, W * 0.095, H * 0.785, 62, { lookX: 0.6, rot: -0.1 });
+  drawCreature(g, 8, W * 0.905, H * 0.745, 58, { lookX: -0.5 });
+  drawCreature(g, 2, W * 0.235, H * 0.635, 46, { rot: 0.15 });
+}
+vignette(g, W, H);
+
+if (/[?&]save=1/.test(location.search)) {
+  canvas.toBlob(blob => {
+    fetch("/upload?name=cover_" + fmt + ".png", { method: "POST", body: blob })
+      .then(r => { document.title = "saved:" + r.status; })
+      .catch(() => { document.title = "save-failed"; });
+  }, "image/png");
+}
+</script>
+</body>
+</html>

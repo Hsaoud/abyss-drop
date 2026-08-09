@@ -25,13 +25,40 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_POST(self):
-        """POST /shot?name=xyz with a data-URL body -> saves shots/xyz.jpg (test helper)."""
+        """POST /shot?name=xyz (data-URL body -> shots/xyz.jpg|png) or
+        POST /upload?name=xyz.webm (raw binary body -> shots/xyz.webm)."""
         import base64
         import os
         import re
         from urllib.parse import urlparse, parse_qs
 
         parsed = urlparse(self.path)
+        if parsed.path == "/upload":
+            name = parse_qs(parsed.query).get("name", ["upload.bin"])[0]
+            name = re.sub(r"[^a-zA-Z0-9_.-]", "", name)[:80] or "upload.bin"
+            if not name.endswith((".webm", ".mp4", ".png", ".jpg")):
+                self.send_error(400)
+                return
+            length = int(self.headers.get("Content-Length", 0))
+            if length > 300_000_000:
+                self.send_error(413)
+                return
+            shots = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shots")
+            os.makedirs(shots, exist_ok=True)
+            path = os.path.join(shots, name)
+            remaining = length
+            with open(path, "wb") as f:
+                while remaining > 0:
+                    chunk = self.rfile.read(min(remaining, 1 << 20))
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    remaining -= len(chunk)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(path.encode())
+            return
         if parsed.path != "/shot":
             self.send_error(404)
             return

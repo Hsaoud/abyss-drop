@@ -13,6 +13,25 @@
 - ✅ Rewarded : « Continuer » (1×/partie) et « Score ×2 » — récompense uniquement sur adFinished
 - ✅ Build ZIP : `python make_zip.py` → `dist/abyss-drop-crazygames.zip`
 
+## Assets marketing — tous générés, aux formats exacts exigés
+
+Dossier [`assets/`](../assets) :
+
+| Fichier | Format demandé | Contenu |
+|---|---|---|
+| `cover_landscape.png` | Landscape 16:9 — **1920×1080** | logo + créatures des 11 paliers, baleine en fond |
+| `cover_portrait.png` | Portrait 2:3 — **800×1200** | même clé visuelle, composition verticale |
+| `cover_square.png` | Square 1:1 — **800×800** | version compacte |
+| `trailer_landscape.mp4` | Landscape video | 1920×1080, 60 fps, 12 s, H.264 — cascade combo ×5 → raie manta |
+| `trailer_portrait.mp4` | Portrait video | 1080×1920, 60 fps, 10 s, H.264 — cascade combo ×5 → **naissance de la baleine** |
+
+Les vidéos sont des captures réelles du moteur (aucun montage) : plateau mis en place pour
+garantir une grosse cascade, puis lâchers normaux filmés à 60 fps. Interface en anglais
+(`?lang=en`). Pas de piste audio — les portails lisent les previews en muet au survol.
+
+Pour régénérer : `game/cover.html?fmt=landscape|portrait|square&save=1` pour les images,
+`game/capture.js` (chargé dans `index.html?headless=1&demo=1&lang=en`) pour les vidéos.
+
 ## Ce que le propriétaire doit faire (≈ 15 minutes)
 
 1. Créer un compte sur **developer.crazygames.com** (gratuit, monde entier, solo OK).

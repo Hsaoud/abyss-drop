@@ -185,8 +185,9 @@ function mulberry32(seed) {
 }
 const dayKey = () => { const d = new Date(); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); };
 
-/* ---------------- i18n ---------------- */
-const FR = (navigator.language || "en").toLowerCase().startsWith("fr");
+/* ---------------- i18n (?lang=en|fr overrides the browser locale) ---------------- */
+const LANG_Q = (location.search.match(/[?&]lang=(fr|en)/) || [])[1];
+const FR = LANG_Q ? LANG_Q === "fr" : (navigator.language || "en").toLowerCase().startsWith("fr");
 const T = FR ? {
   gameOver: "ABYSSE ATTEINT", score: "SCORE", best: "RECORD", newBest: "NOUVEAU RECORD !",
   nearMiss: p => `À ${p}% de ton record !`,
@@ -392,6 +393,16 @@ const SFX = (() => {
   const pentFreq = i => 523.25 * Math.pow(2, PENT[i % 5] / 12) * Math.pow(2, Math.min(Math.floor(i / 5), 2));
   return {
     unlock, resume, suspend, setMuted, setPlatformMuted,
+    state() { return ctx ? ctx.state : "none"; },
+    /* returns a MediaStream of the game mix (used by the trailer capture harness) */
+    captureStream() {
+      if (!ctx || !comp) return null;
+      try {
+        const dest = ctx.createMediaStreamDestination();
+        comp.connect(dest);
+        return dest.stream;
+      } catch (e) { return null; }
+    },
     duckAmbience(level) {
       if (!ambGain || !ctx) return;
       const target = lerp(0.05, 0.018, level);
@@ -2078,6 +2089,25 @@ const Game = (() => {
       if (!HEADLESS) requestAnimationFrame(frame);
     },
     tick,
+    /* capture/demo hooks — only reachable when the page is opened with ?demo=1 */
+    demo: /[?&]demo=1/.test(location.search) ? {
+      spawn(tier, x, y, opts) {
+        const c = newCreature(tier, x, y, false);
+        c.pop = 1;
+        if (opts && opts.pop) c.pop = 0;
+        creatures.push(c);
+        return c;
+      },
+      setNext(t) {
+        nextTier = t;
+        if (held) { held.tier = t; held.r = TIERS[t].f * L.cw; }
+      },
+      setScore(v) { score = v; },
+      clear() { creatures.length = 0; ghosts.length = 0; mergeQueue.length = 0; },
+      layout() { return L; },
+      tiers() { return TIERS; },
+      hud() { return { combo, maxTierRun, warn: warnLevel }; },
+    } : undefined,
     reset, drop, doContinue, doubleScore,
     setAim(x, isAiming) { aimX = x; aiming = isAiming; },
     releaseAim() { aiming = false; },
