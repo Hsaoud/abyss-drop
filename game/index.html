@@ -466,8 +466,12 @@ const Ads = (() => {
   const portalParam = (location.search.match(/[?&]portal=(\w+)/) || [])[1];
   function hostPortal() {
     const h = location.hostname;
-    if (/(^|\.)crazygames\.(com|fr|de|es|it|nl|pl|pt|jp|co\.uk)$/.test(h) || /crazygames\.com/.test(document.referrer)) return "crazygames";
-    if (/(^|\.)poki\.com$/.test(h) || /(^|\.)poki-gdn\.com$/.test(h) || /poki\.com/.test(document.referrer)) return "poki";
+    let ref = "";
+    try { ref = document.referrer ? new URL(document.referrer).hostname : ""; } catch (e) { }
+    const cg = x => /(^|\.)crazygames\.(com|fr|de|es|it|nl|pl|pt|jp|co\.uk)$/.test(x);
+    const pk = x => /(^|\.)poki\.com$/.test(x) || /(^|\.)poki-gdn\.com$/.test(x);
+    if (cg(h) || cg(ref)) return "crazygames";
+    if (pk(h) || pk(ref)) return "poki";
     return null;
   }
   function loadScript(src) {
@@ -588,7 +592,7 @@ const Ads = (() => {
       try {
         if (kind === "poki" && inited) {
           muteForAd(true);
-          sdk.rewardedBreak().then(ok => { muteForAd(false); ok ? onReward() : (onFail ? onFail() : 0); })
+          sdk.rewardedBreak().then(ok => { muteForAd(false); ok ? onReward() : free(); }) // no-fill must never be a dead button
             .catch(() => { muteForAd(false); free(); });
         } else if (kind === "crazygames" && inited) {
           if (adblocked) { free(); return; } // CG QA: game must stay playable under adblock
@@ -1161,6 +1165,7 @@ const Game = (() => {
     } else rng = Math.random;
     nextTier = pickSpawnTier();
     spawnHeld();
+    SFX.duckAmbience(0); // restore the ambience bed after a danger-heavy end
     S.games++; store.set("games", S.games);
     Ads.runStarted();
     Ads.gameplayStart();
@@ -1333,13 +1338,26 @@ const Game = (() => {
 
   const mergeQueue = [];
 
-  /* wake every sleeper in contact range of a removed body — prevents mid-air hover */
+  /* wake every sleeper in contact range of a removed body — prevents mid-air hover.
+     One-hop flood: a sleeper resting solely on a woken neighbor must wake too. */
   function wakeAround(d) {
+    const woken = [];
     for (const c of creatures) {
       if (c.dead || c === d) continue;
       const rr = c.r + d.r + 24 * L.scale;
       const dx = c.x - d.x, dy = c.y - d.y;
-      if (dx * dx + dy * dy < rr * rr) { c.asleep = false; c.sleepT = 0; }
+      if (dx * dx + dy * dy < rr * rr) {
+        if (c.asleep) woken.push(c);
+        c.asleep = false; c.sleepT = 0;
+      }
+    }
+    for (const w of woken) {
+      for (const c of creatures) {
+        if (c.dead || c === w || !c.asleep) continue;
+        const rr = c.r + w.r + 24 * L.scale;
+        const dx = c.x - w.x, dy = c.y - w.y;
+        if (dx * dx + dy * dy < rr * rr) { c.asleep = false; c.sleepT = 0; }
+      }
     }
   }
 
@@ -1550,6 +1568,7 @@ const Game = (() => {
       if (score > S.dailyBest.score) { S.dailyBest.score = score; store.set("dailyBest", S.dailyBest); isNew = true; }
     } else if (score > S.best) { S.best = score; store.set("best", S.best); isNew = true; }
     UI.refreshOverScore(score, runIsDaily ? S.dailyBest.score : S.best, isNew);
+    checkUnlocks(0); // a x2 that crosses a theme threshold toasts now, not next run
     if (isNew) SFX.newBest(); else SFX.ui();
   }
 
@@ -2352,6 +2371,12 @@ if ("serviceWorker" in navigator && !/[?&](headless|nosw)=1/.test(location.searc
 
 /* ---------------- boot ---------------- */
 document.documentElement.lang = FR ? "fr" : "en";
+// migrate legacy theme unlocks once, so a veteran's backlog never bursts as stacked toasts
+{
+  let mask = store.get("themesUnlocked", 1);
+  THEMES.forEach((th, i) => { if (S.best >= th.need) mask |= 1 << i; });
+  store.set("themesUnlocked", mask);
+}
 Ads.init();
 UI.wire();
 Game.init();
