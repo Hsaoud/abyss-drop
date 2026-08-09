@@ -1,5 +1,5 @@
 /* Abyss Drop service worker — cache-first for full offline play */
-const VERSION = "abyss-drop-v1.1.0";
+const VERSION = "abyss-drop-v1.1.1";
 const ASSETS = [
   "./",
   "./index.html",

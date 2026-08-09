@@ -157,7 +157,7 @@
 
 <script>
 "use strict";
-window.__BUILD = "r4";
+window.__BUILD = "r5";
 /* =====================================================================
    ABYSS DROP — bioluminescent merge-drop
    Single-file vanilla JS · custom fixed-timestep circle physics ·
@@ -266,6 +266,7 @@ const SFX = (() => {
   let ctx = null, master = null, comp = null, ambGain = null, unlocked = false, lastThud = 0, lastTick = 0;
   let wantSuspended = false; // deliberate suspend (tab hidden) must not be undone by auto-resume
   let lastDuck = -1;
+  let logicalMuted = !S.sound, platformMuted = false; // platform mute (portal UI) overrides in-game sound setting
   const PENT = [0, 4, 7, 9, 14]; // C E G A D — wide arpeggio contour (never dissonant)
   function ensure() {
     if (ctx) return true;
@@ -299,7 +300,9 @@ const SFX = (() => {
   }
   function resume() { wantSuspended = false; if (ctx && ctx.state !== "running") ctx.resume().catch(() => { }); }
   function suspend() { wantSuspended = true; if (ctx && ctx.state === "running") ctx.suspend().catch(() => { }); }
-  function setMuted(m) { if (master) master.gain.setTargetAtTime(m ? 0 : 0.8, ctx.currentTime, 0.02); }
+  function applyGain() { if (master) master.gain.setTargetAtTime((logicalMuted || platformMuted) ? 0 : 0.8, ctx.currentTime, 0.02); }
+  function setMuted(m) { logicalMuted = m; applyGain(); }
+  function setPlatformMuted(m) { platformMuted = m; if (ctx) applyGain(); }
   /* env/osc accept an absolute AudioContext start time so melodies never ride main-thread jitter */
   function env(g0, t, a, at, pan) {
     const g = ctx.createGain();
@@ -388,7 +391,7 @@ const SFX = (() => {
   }
   const pentFreq = i => 523.25 * Math.pow(2, PENT[i % 5] / 12) * Math.pow(2, Math.min(Math.floor(i / 5), 2));
   return {
-    unlock, resume, suspend, setMuted,
+    unlock, resume, suspend, setMuted, setPlatformMuted,
     duckAmbience(level) {
       if (!ambGain || !ctx) return;
       const target = lerp(0.05, 0.018, level);
@@ -511,6 +514,11 @@ const Ads = (() => {
         inited = true;
         try { sdk.game.loadingStart(); sdk.game.loadingStop(); } catch (e) { }
         try { adblocked = await sdk.ad.hasAdblock(); } catch (e) { }
+        // portal mute button: takes priority over the in-game sound setting
+        try {
+          sdk.game.addSettingsChangeListener(s => { try { SFX.setPlatformMuted(!!(s && s.muteAudio)); } catch (e) { } });
+          if (sdk.game.settings && sdk.game.settings.muteAudio) SFX.setPlatformMuted(true);
+        } catch (e) { }
         log("crazygames ready, adblock:", adblocked);
       } else if (kind === "h5") {
         try { window.adConfig({ preloadAdBreaks: "on", sound: S.sound ? "on" : "off" }); } catch (e) { }
